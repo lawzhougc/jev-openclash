@@ -7,7 +7,10 @@ ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple \
+      --trusted-host pypi.tuna.tsinghua.edu.cn \
+      -r requirements.txt
 
 COPY core/ ./core/
 COPY static/ ./static/

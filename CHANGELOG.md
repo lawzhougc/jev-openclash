@@ -7,6 +7,27 @@
 
 ---
 
+## [1.0.1] - 2026-09-20
+
+修复首次部署到 iStoreOS 时暴露的两个构建/运维问题。
+
+### 修复
+
+- **`requirements.txt` 内容串行**：文件头部误混入了 Dockerfile 的
+  `FROM`/`python:3.11-slim` 两行，导致 `pip install` 报
+  `Invalid requirement: 'python:3.11-slim'`。已改为纯依赖列表
+- **国内网络下 pip 装包失败**：iStoreOS 直连 `pypi.org` 频繁出现
+  `SSL: UNEXPECTED_EOF_WHILE_READING`。Dockerfile 改用清华 TUNA 镜像源
+- **日志泄漏 API key**：`release.py` 会把 TypeSafe API key 明文打印到
+  部署日志。新增 `_mask()` 脱敏，只保留首 8 位与末 4 位
+
+### 变更
+
+- 默认 `config.yaml` 的 `openclash.api` 由 `http://192.168.3.2:9090`
+  改为 `http://127.0.0.1:9090`（容器使用 `--network host`，走回环更稳）
+
+---
+
 ## [1.0.0] - 2026-09-20
 
 首个可用版本。从原演示原型（`legacy/`）重写为生产可用的智能选路服务。
