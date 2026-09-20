@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  jev-controller:
+    build: .
+    container_name: jev-openclash-controller
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai

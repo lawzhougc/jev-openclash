@@ -1,0 +1,50 @@
+openclash:
+  api: http://192.168.3.2:9090
+  secret: np7fj4lv
+  provider: glados
+targets:
+- name: Gemini
+  group: ♊ Gemini
+  candidate_groups:
+  - 🇯🇵 日本节点
+  - 🇸🇬 新加坡节点
+  - 🇺🇲 Gemini节点
+  service_desc: 'Gemini 是 Google 旗下的 AI 服务（含 API 与网页版）， 对出口 IP 的机房属性与地区归属敏感。 官方支持地区包含日本、美国、新加坡等，未支持地区会被拒绝访问。
+
+    '
+  known_facts:
+  - Gemini API 端点 generativelanguage.googleapis.com，未授权请求返回 401/403
+  - 被 IP 风控时返回 403 或 429，而非鉴权错误
+  - gstatic.com 的 generate_204 是通用连通性探测点，测不出平台级风控
+  probe:
+    url: https://generativelanguage.googleapis.com/v1beta/models
+    ok_status:
+    - 200
+    - 400
+    - 401
+    - 403
+    - 429
+    blocked_status:
+    - 403
+    timeout: 8
+    attempts: 2
+engine:
+  latency_weight: 0.4
+  probe_weight: 0.45
+  prior_weight: 0.15
+  cooldown_sec: 90
+  hysteresis: 0.15
+  fail_threshold: 3
+  blacklist_sec: 1800
+  interval_sec: 120
+jev:
+  enabled: true
+  api: https://api.typesafe.ai/v1/systemone
+  model: jev-latest
+  timeout: 45
+  cache_sec: 3600
+  apply_to_decision: true
+server:
+  host: 0.0.0.0
+  port: 8000
+  dry_run: true
