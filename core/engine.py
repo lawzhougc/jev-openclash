@@ -59,6 +59,7 @@ class Candidate:
     delay_score: float = 0.0
     prior: float = 0.5
     probe_score: float | None = None
+    probed: bool = False            # probe_score 是否来自真实探活
     final: float = 0.0
     note: str = ""
 
@@ -67,6 +68,7 @@ class Candidate:
             "name": self.name, "region": self.region, "alive": self.alive,
             "delay": self.delay, "delay_score": self.delay_score,
             "prior": self.prior, "probe_score": self.probe_score,
+            "probed": self.probed,
             "final": self.final, "note": self.note,
         }
 
@@ -120,13 +122,14 @@ class Engine:
         self.fail_threshold = int(e.get("fail_threshold", 3))
         self.blacklist_sec = float(e.get("blacklist_sec", 1800))
         self.interval = float(e.get("interval_sec", 120))
+        self.probe_ttl = float(e.get("probe_cache_sec", 1800))
 
         # 运行时状态
         self.fail_count: dict[str, int] = {}
         self.blacklist: dict[str, float] = {}
         self.last_switch_ts: dict[str, float] = {}
         self.last_good: dict[str, str] = {}
-        self.probe_cache: dict[str, ProbeResult] = {}
+        self.probe_cache: dict[str, tuple[float, ProbeResult]] = {}
         self._last_path: dict[str, list] = {}
 
     # ---------- 黑名单 ----------
@@ -152,14 +155,28 @@ class Engine:
     # ---------- 打分 ----------
     def score_candidates(self, nodes: list[Node], prior: dict) -> list[Candidate]:
         out: list[Candidate] = []
+        now = time.time()
         for n in nodes:
             reg = region_of(n.name)
             p = prior.get(reg, 0.5)
             d = n.delay_score if n.alive else 0.0
             c = Candidate(name=n.name, region=reg, alive=n.alive,
                           delay=n.delay, delay_score=d, prior=p)
-            # 未探活的节点，probe_score 用先验替代（避免权重丢失）
-            c.final = self._combine(d, p, p)
+            hit = self.probe_cache.get(n.name)
+            if hit and now - hit[0] <= self.probe_ttl:
+                # 有真实探活记录：探活分进入公式，被风控/未通过直接压 0
+                pres = hit[1]
+                c.probed = True
+                c.probe_score = pres.score
+                c.final = self._combine(d, c.probe_score, p)
+                if pres.blocked:
+                    c.note = "探活被风控"
+                elif not pres.ok:
+                    c.note = "探活未通过"
+            else:
+                # 未探活的节点，probe_score 用先验替代（避免权重丢失）
+                c.probe_score = p
+                c.final = self._combine(d, p, p)
             if not n.alive:
                 c.final = 0.0
                 c.note = "节点不可达"
@@ -380,7 +397,7 @@ class Engine:
             time.sleep(2)                       # 等 Mihomo 应用新出口
             pres = pr.probe_current(best.name)
             probe_res = pres.to_dict()
-            self.probe_cache[best.name] = pres
+            self.probe_cache[best.name] = (time.time(), pres)
 
             if not pres.ok or pres.blocked:
                 # 事实推翻先验 -> 回滚 + 拉黑

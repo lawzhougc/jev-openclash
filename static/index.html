@@ -4,12 +4,27 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SmartRoute · OpenClash 智能选路</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232467d6'/%3E%3Cpath d='M8 17h5l2.5-6 3.5 11 2.5-5H25' stroke='white' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
   :root{
     --bg:#f6f7f9; --panel:#ffffff; --panel2:#fbfcfd; --bd:#e3e6ec;
     --tx:#1c2028; --tx2:#5b6473; --tx3:#8f98a6;
     --up:#d92b2b; --down:#0f9d58; --blue:#2467d6; --amber:#c07800;
     --purple:#7c4dcc; --teal:#0f8a8a;
+    --pick-bg:#f4f8ff;
+    --r-japan:#d92b2b; --r-singapore:#0f8a8a; --r-usa:#2467d6;
+    --r-taiwan:#c07800; --r-korea:#7c4dcc; --r-hongkong:#0f9d58;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#12151a; --panel:#1a1f27; --panel2:#20262f; --bd:#2c3441;
+      --tx:#e8ecf2; --tx2:#aab4c2; --tx3:#74808f;
+      --up:#ff7a7a; --down:#43d18f; --blue:#74a8f7; --amber:#e2a94a;
+      --purple:#b095ec; --teal:#45c2c2;
+      --pick-bg:#223046;
+      --r-japan:#ff7a7a; --r-singapore:#45c2c2; --r-usa:#74a8f7;
+      --r-taiwan:#e2a94a; --r-korea:#b095ec; --r-hongkong:#43d18f;
+    }
   }
   *{box-sizing:border-box;margin:0;padding:0}
   body{
@@ -24,38 +39,60 @@
   .sub{color:var(--tx3);font-size:12px}
   .spacer{flex:1}
   .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;
-    font-size:11px;font-weight:600;border:1px solid transparent}
+    font-size:11px;font-weight:600;border:1px solid transparent;white-space:nowrap}
   .b-ok{background:#e8f5ee;color:#0f7a45;border-color:#c3e6d3}
   .b-warn{background:#fdf3e0;color:#996200;border-color:#f2ddb0}
   .b-err{background:#fdeaea;color:#b32020;border-color:#f3c9c9}
   .b-info{background:#e9f0fd;color:#1a4fa0;border-color:#c8d9f5}
+  .b-off{background:#f0f2f5;color:#69707d;border-color:#dfe3e9}
+  @media (prefers-color-scheme: dark){
+    .b-ok{background:#153325;color:#5fd39a;border-color:#24543c}
+    .b-warn{background:#3a2e12;color:#e8b45c;border-color:#5a4720}
+    .b-err{background:#3c1c1c;color:#ff8f8f;border-color:#5c2c2c}
+    .b-info{background:#182a45;color:#8db8f5;border-color:#274066}
+    .b-off{background:#252b34;color:#94a0b0;border-color:#333c48}
+  }
   button{font:inherit;font-size:12px;padding:6px 13px;border-radius:7px;cursor:pointer;
     border:1px solid var(--bd);background:var(--panel);color:var(--tx);transition:.15s}
   button:hover{background:var(--panel2);border-color:#c9cfda}
   button.primary{background:var(--blue);color:#fff;border-color:var(--blue)}
-  button.primary:hover{background:#1d57ba}
+  button.primary:hover{filter:brightness(1.08)}
   button:disabled{opacity:.5;cursor:not-allowed}
+  button.mini{font-size:11px;padding:3px 9px;border-radius:6px}
+  button.danger{color:var(--up)}
+  input[type=text],select{font:inherit;font-size:11.5px;padding:4px 8px;border-radius:6px;
+    border:1px solid var(--bd);background:var(--panel);color:var(--tx);outline:none}
+  input[type=text]:focus,select:focus{border-color:var(--blue)}
+  input[type=checkbox]{accent-color:var(--blue);vertical-align:middle}
+
+  .tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+  .tab{border-radius:8px;padding:5px 13px;font-size:12px;font-weight:600}
+  .tab.on{background:var(--blue);color:#fff;border-color:var(--blue)}
 
   .grid{display:grid;gap:16px}
   .g2{grid-template-columns:1.55fr 1fr}
   .g3{grid-template-columns:repeat(3,1fr)}
-  @media(max-width:1100px){.g2,.g3{grid-template-columns:1fr}}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:1100px){.g2,.g3,.g4{grid-template-columns:1fr}}
 
   .card{background:var(--panel);border:1px solid var(--bd);border-radius:11px;
     box-shadow:0 1px 2px rgba(16,24,40,.04)}
   .card-h{display:flex;align-items:center;gap:8px;padding:13px 16px;
-    border-bottom:1px solid var(--bd);font-weight:620;font-size:13.5px}
+    border-bottom:1px solid var(--bd);font-weight:620;font-size:13.5px;flex-wrap:wrap}
   .card-h .dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
   .card-b{padding:14px 16px}
   .card-b.tight{padding:0}
+  .toolbar{display:flex;gap:8px;align-items:center;margin-left:auto;flex-wrap:wrap;font-weight:400}
 
   table{width:100%;border-collapse:collapse;font-size:12.5px}
   th{text-align:left;font-weight:600;color:var(--tx3);font-size:11px;
     padding:9px 14px;border-bottom:1px solid var(--bd);background:var(--panel2);
     position:sticky;top:0;z-index:1;letter-spacing:.02em}
   td{padding:9px 14px;border-bottom:1px solid #eef0f4;vertical-align:middle}
+  @media (prefers-color-scheme: dark){ td{border-bottom-color:#252c36} }
   tr:last-child td{border-bottom:none}
   tbody tr:hover{background:#fafbfc}
+  @media (prefers-color-scheme: dark){ tbody tr:hover{background:#1f252e} }
   .scroll{max-height:420px;overflow:auto}
 
   .mono{font-family:"SF Mono",SFMono-Regular,Consolas,"Liberation Mono",monospace;
@@ -63,14 +100,30 @@
   .node{display:inline-block;padding:2px 7px;border-radius:5px;background:#eef1f6;
     color:#39415a;font-weight:600}
   .node.pick{background:#e5edfd;color:#1a4fa0;border:1px solid #c8d9f5}
+  @media (prefers-color-scheme: dark){
+    .node{background:#2a323e;color:#c3ccd8}
+    .node.pick{background:#223046;color:#8db8f5;border-color:#35507a}
+  }
+  .chip-cur{display:inline-block;padding:1px 6px;border-radius:5px;font-size:10px;
+    font-weight:700;background:#e5edfd;color:#1a4fa0;border:1px solid #c8d9f5;margin-left:5px}
+  @media (prefers-color-scheme: dark){
+    .chip-cur{background:#223046;color:#8db8f5;border-color:#35507a}
+  }
+  tr.pick-row{background:var(--pick-bg)}
 
   .bar{height:5px;background:#edf0f4;border-radius:3px;overflow:hidden;min-width:52px}
   .bar i{display:block;height:100%;border-radius:3px}
+  @media (prefers-color-scheme: dark){ .bar{background:#2a323e} }
 
   .act{padding:2px 8px;border-radius:5px;font-size:11px;font-weight:650;display:inline-block}
   .a-switch{background:#e9f0fd;color:#1a4fa0}
   .a-hold{background:#f0f2f5;color:#69707d}
   .a-rollback{background:#fdeaea;color:#b32020}
+  @media (prefers-color-scheme: dark){
+    .a-switch{background:#182a45;color:#8db8f5}
+    .a-hold{background:#252b34;color:#94a0b0}
+    .a-rollback{background:#3c1c1c;color:#ff8f8f}
+  }
 
   .stat{padding:13px 15px;border-radius:10px;background:var(--panel);
     border:1px solid var(--bd)}
@@ -89,17 +142,46 @@
   .legend span{display:flex;align-items:center;gap:5px}
   .legend em{width:8px;height:8px;border-radius:2px;display:block}
   .hint{font-size:11px;color:var(--tx3);margin-top:4px}
-  .warnbox{background:#fdf3e0;border:1px solid #f2ddb0;color:#815200;
-    padding:9px 12px;border-radius:8px;font-size:12px;margin-bottom:12px}
+  .warnbox{padding:9px 12px;border-radius:8px;font-size:12px;margin-bottom:12px;
+    background:#fdf3e0;border:1px solid #f2ddb0;color:#815200}
+  .warnbox.err{background:#fdeaea;border-color:#f3c9c9;color:#b32020}
+  .warnbox.info{background:#e9f0fd;border-color:#c8d9f5;color:#1a4fa0}
+  @media (prefers-color-scheme: dark){
+    .warnbox{background:#3a2e12;border-color:#5a4720;color:#e8b45c}
+    .warnbox.err{background:#3c1c1c;border-color:#5c2c2c;color:#ff8f8f}
+    .warnbox.info{background:#182a45;border-color:#274066;color:#8db8f5}
+  }
   .kv{display:flex;justify-content:space-between;padding:6px 0;
     border-bottom:1px dashed #eef0f4;font-size:12px}
   .kv:last-child{border-bottom:none}
+  @media (prefers-color-scheme: dark){ .kv{border-bottom-color:#252c36} }
   .kv .k{color:var(--tx3)}
   .kv .v{font-weight:600}
   .pathbox{background:#f2f6fd;border:1px solid #d3e2f8;border-radius:7px;
     padding:7px 10px;margin-top:9px;font-size:11.5px;color:#1a4fa0;
     font-family:"SF Mono",SFMono-Regular,Consolas,monospace;word-break:break-all;
     line-height:1.6}
+  @media (prefers-color-scheme: dark){
+    .pathbox{background:#1b2534;border-color:#2b3f5c;color:#8db8f5}
+  }
+  .spark{color:var(--teal);vertical-align:middle}
+  .probe-hist{margin-top:10px;border-top:1px dashed var(--bd);padding-top:8px}
+  .probe-hist .row{display:flex;align-items:center;gap:8px;font-size:11px;
+    color:var(--tx2);padding:3px 0}
+  .probe-hist .row .t{color:var(--tx3);width:64px;flex:0 0 auto}
+  .ctrl-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .force-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+  .force-row select{min-width:170px}
+  .hbox{font-size:11.5px;margin-bottom:12px}
+  .hbox .row{display:flex;justify-content:space-between;padding:4px 0;
+    border-bottom:1px dashed var(--bd)}
+  .hbox .row:last-child{border-bottom:none}
+  .blkl{font-size:11.5px}
+  .blkl .row{display:flex;align-items:center;gap:8px;padding:5px 0;
+    border-bottom:1px dashed var(--bd)}
+  .blkl .row:last-child{border-bottom:none}
+  .blkl .nm{flex:1;font-weight:600;word-break:break-all}
+  .blkl .tm{color:var(--tx3);white-space:nowrap}
 </style>
 </head>
 <body>
@@ -109,32 +191,41 @@
     <h1>SmartRoute</h1>
     <span class="sub">OpenClash 智能选路控制台</span>
     <span class="spacer"></span>
+    <span id="bd-panel" class="badge b-info">面板 …</span>
     <span id="bd-oc" class="badge b-info">OpenClash …</span>
     <span id="bd-jev" class="badge b-info">Jev …</span>
     <span id="bd-mode" class="badge b-info">…</span>
     <button id="btn-run" class="primary">立即决策</button>
   </header>
 
-  <div id="drybar"></div>
+  <div id="alertbar"></div>
+  <div id="tgt-tabs" class="tabs" style="display:none"></div>
 
-  <div class="grid g3" style="margin-bottom:16px">
+  <div class="grid g4" style="margin-bottom:16px">
     <div class="stat"><div class="k">决策轮次</div><div class="v" id="s-cycles">–</div>
       <div class="n" id="s-last">尚未运行</div></div>
     <div class="stat"><div class="k">节点池</div><div class="v" id="s-nodes">–</div>
       <div class="n" id="s-alive">–</div></div>
     <div class="stat"><div class="k">切换 / 回滚</div><div class="v" id="s-sw">–</div>
       <div class="n" id="s-bl">黑名单 0</div></div>
+    <div class="stat"><div class="k">引擎</div><div class="v" id="s-engine" style="font-size:16px">–</div>
+      <div class="n" id="s-engine-n">–</div></div>
   </div>
 
   <div class="grid g2" style="margin-bottom:16px">
 
     <div class="card">
-      <div class="card-h"><span class="dot" style="background:var(--blue)"></span>决策流</div>
+      <div class="card-h"><span class="dot" style="background:var(--blue)"></span>决策流
+        <div class="toolbar">
+          <button class="mini" id="btn-json">导出 JSON</button>
+          <button class="mini" id="btn-csv">导出 CSV</button>
+        </div>
+      </div>
       <div class="card-b tight">
         <div class="scroll">
           <table>
             <thead><tr>
-              <th style="width:62px">时间</th>
+              <th style="width:88px">时间</th>
               <th style="width:64px">动作</th>
               <th style="width:150px">切换</th>
               <th>理由</th>
@@ -146,9 +237,10 @@
         </div>
       </div>
       <div class="legend">
-        <span><em style="background:#1a4fa0"></em>switch 切换</span>
+        <span><em style="background:var(--blue)"></em>switch 切换</span>
         <span><em style="background:#69707d"></em>hold 保持</span>
-        <span><em style="background:#b32020"></em>rollback 回滚</span>
+        <span><em style="background:var(--up)"></em>rollback 回滚</span>
+        <span id="lg-tgt">目标 –</span>
       </div>
     </div>
 
@@ -171,46 +263,85 @@
   </div>
 
   <div class="card" style="margin-bottom:16px">
-    <div class="card-h"><span class="dot" style="background:var(--up)"></span>候选节点打分</div>
+    <div class="card-h"><span class="dot" style="background:var(--up)"></span>候选节点打分
+      <div class="toolbar">
+        <input type="text" id="cand-q" placeholder="搜索节点…" style="width:120px">
+        <select id="cand-region"><option value="">全部地区</option></select>
+        <label style="font-size:11.5px;color:var(--tx2)"><input type="checkbox" id="cand-alive"> 只看存活</label>
+        <button class="mini" id="btn-all">显示全部</button>
+        <span id="cand-count" class="hint" style="margin:0"></span>
+      </div>
+    </div>
     <div class="card-b tight">
       <div class="scroll">
         <table>
           <thead><tr>
-            <th style="width:180px">节点</th>
-            <th style="width:74px">地区</th>
-            <th style="width:70px">延迟</th>
-            <th style="width:118px">延迟分</th>
-            <th style="width:118px">先验</th>
-            <th style="width:118px">综合</th>
+            <th style="width:172px">节点</th>
+            <th style="width:64px">地区</th>
+            <th style="width:62px">延迟</th>
+            <th style="width:58px">走势</th>
+            <th style="width:104px">延迟分</th>
+            <th style="width:104px">探活分</th>
+            <th style="width:104px">先验</th>
+            <th style="width:104px">综合</th>
             <th>备注</th>
           </tr></thead>
           <tbody id="tb-cand">
-            <tr><td colspan="7" class="empty">等待数据…</td></tr>
+            <tr><td colspan="9" class="empty">等待数据…</td></tr>
           </tbody>
         </table>
       </div>
     </div>
     <div class="legend">
-      <span>综合 = 延迟×0.40 + 探活×0.45 + 先验×0.15</span>
+      <span id="lg-formula">综合 = 延迟×0.40 + 探活×0.45 + 先验×0.15</span>
+      <span>探活分带 * = 未实测，按先验折算</span>
       <span>延迟单位 ms，越低越好</span>
-      <span id="lg-tgt">目标 Gemini</span>
     </div>
   </div>
 
-  <div class="card">
-    <div class="card-h"><span class="dot" style="background:var(--amber)"></span>策略组当前状态</div>
-    <div class="card-b tight">
-      <table>
-        <thead><tr>
-          <th style="width:200px">组名</th>
-          <th style="width:90px">类型</th>
-          <th style="width:230px">当前指向</th>
-          <th>成员数</th>
-        </tr></thead>
-        <tbody id="tb-grp">
-          <tr><td colspan="4" class="empty">等待数据…</td></tr>
-        </tbody>
-      </table>
+  <div class="grid g2">
+    <div class="card">
+      <div class="card-h"><span class="dot" style="background:var(--amber)"></span>策略组当前状态</div>
+      <div class="card-b tight">
+        <table>
+          <thead><tr>
+            <th style="width:190px">组名</th>
+            <th style="width:90px">类型</th>
+            <th style="width:210px">当前指向</th>
+            <th>成员数</th>
+          </tr></thead>
+          <tbody id="tb-grp">
+            <tr><td colspan="4" class="empty">等待数据…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h"><span class="dot" style="background:var(--down)"></span>运维控制</div>
+      <div class="card-b">
+        <div class="ctrl-row">
+          <button id="btn-pause">暂停引擎</button>
+          <button id="btn-hc">触发 provider 测速</button>
+          <button id="btn-health">运行自检</button>
+        </div>
+        <div id="health-box" class="hbox" style="display:none"></div>
+
+        <div class="kv" style="border-top:1px dashed var(--bd);margin-top:4px">
+          <span class="k">强制切换（绕过打分，谨慎使用）</span>
+        </div>
+        <div class="force-row">
+          <select id="force-node"><option value="">选择节点…</option></select>
+          <button id="btn-force" class="danger">强制切换</button>
+        </div>
+        <div id="force-result" class="hint" style="margin-bottom:12px"></div>
+
+        <div class="kv" style="border-top:1px dashed var(--bd)">
+          <span class="k">黑名单</span>
+          <button class="mini danger" id="btn-unblk-all" style="display:none">全部解除</button>
+        </div>
+        <div id="blk-box" class="blkl"><div class="empty" style="padding:12px">黑名单为空</div></div>
+      </div>
     </div>
   </div>
 
@@ -219,89 +350,173 @@
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s)
-  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 
 const REGION_CN = {japan:'日本',singapore:'新加坡',usa:'美国',taiwan:'中国台湾',
   korea:'韩国',hongkong:'中国香港',auto:'自动',unknown:'未知'};
-const REGION_COLOR = {japan:'#d92b2b',singapore:'#0f8a8a',usa:'#2467d6',
-  taiwan:'#c07800',korea:'#7c4dcc',hongkong:'#0f9d58'};
+const REGION_COLOR = {japan:'var(--r-japan)',singapore:'var(--r-singapore)',usa:'var(--r-usa)',
+  taiwan:'var(--r-taiwan)',korea:'var(--r-korea)',hongkong:'var(--r-hongkong)'};
+const VERDICT_CN = {
+  ok:'完全可用', auth_ok:'IP 已放行（缺鉴权/配额）', geo_blocked:'地区受限 · 被风控',
+  unknown_403:'403 未判别（保守视为风控）', unreachable:'不可达', unknown:'未知',
+};
+const LABEL_CN = {ok:'放行',blocked:'被风控',unreachable:'不可达',unknown:'未知'};
 
-let lastDecision = null;
+// ---------- 统一状态（WS 推送与轮询都走同一入口） ----------
+const state = {
+  status:null, statusErr:'', targets:[], target:null,
+  decisions:[], nodes:[], groups:{},
+  wsUp:false, wsErr:'',
+  showAll:false, q:'', region:'', aliveOnly:false,
+  lastMsg:0,
+};
 
+const decKey = d => `${d.ts}|${d.target}|${d.action}|${d.to_node||''}`;
+function mergeDecisions(list){
+  const map = new Map();
+  for(const d of state.decisions) map.set(decKey(d), d);
+  for(const d of (list||[])) map.set(decKey(d), d);
+  state.decisions = [...map.values()].sort((a,b)=>b.ts-a.ts).slice(0,120);
+}
+
+function targetDecisions(){
+  return state.decisions.filter(d=>d.target===state.target);
+}
+function latestDecision(){
+  return targetDecisions()[0] || null;
+}
+function curResolved(){
+  const lg = latestDecision();
+  if(!lg) return null;
+  const g = state.groups[lg.group];
+  return g ? (g.resolved || g.now || null) : null;
+}
+
+// ---------- 工具 ----------
+function relTime(ts){
+  if(!ts) return '–';
+  const s = Date.now()/1000 - ts;
+  if(s < 5) return '刚刚';
+  if(s < 60) return Math.max(1,Math.floor(s)) + ' 秒前';
+  if(s < 3600) return Math.floor(s/60) + ' 分钟前';
+  if(s < 86400) return Math.floor(s/3600) + ' 小时前';
+  return Math.floor(s/86400) + ' 天前';
+}
+function fullTime(ts){
+  return ts ? new Date(ts*1000).toLocaleString('zh-CN') : '';
+}
+function mmss(sec){
+  sec = Math.max(0, Math.floor(sec||0));
+  const m = Math.floor(sec/60), s = sec%60;
+  return m ? `${m}m${String(s).padStart(2,'0')}s` : `${s}s`;
+}
 function scoreBar(v, color){
-  const pct = Math.max(0, Math.min(1, v)) * 100;
+  const pct = Math.max(0, Math.min(1, v||0)) * 100;
   return `<div class="bar"><i style="width:${pct}%;background:${color}"></i></div>`;
 }
+function spark(hist){
+  const vals = (hist||[]).slice(-24).filter(v=>typeof v==='number' && v>0);
+  if(vals.length < 2) return '';
+  const w=52, h=15, max=Math.max(...vals), min=Math.min(...vals), span=(max-min)||1;
+  const pts = vals.map((v,i)=>`${(i/(vals.length-1)*w).toFixed(1)},${(h-1-(v-min)/span*(h-3)).toFixed(1)}`).join(' ');
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
+         `<polyline fill="none" stroke="currentColor" stroke-width="1.2" points="${pts}"/></svg>`;
+}
+function probeNodeCN(n){
+  if(n === '__dry_run_current__') return '本机出口（DRY-RUN）';
+  if(n === '__direct__') return '直连出口';
+  return n || '–';
+}
 
-function renderPrior(table){
-  const box = $('prior-box');
-  if(!table || !Object.keys(table).length){
-    box.innerHTML = '<div class="empty">Jev 未返回（未启用或调用失败）</div>';
-    $('bd-jev').className = 'badge b-warn';
-    $('bd-jev').textContent = 'Jev 不可用';
+// ---------- 渲染 ----------
+function render(){ renderAlerts(); renderTabs(); renderStats(); renderFeed();
+  renderPrior(); renderProbe(); renderCand(); renderGroups(); renderBlacklist(); }
+
+function renderAlerts(){
+  const s = state.status, bar = $('alertbar'); const out = [];
+  if(!s){
+    out.push(`<div class="warnbox err">面板后端失联${state.statusErr?'（'+esc(state.statusErr)+'）':''}，无法获取状态。正在重试…</div>`);
+  }else{
+    if(s.dry_run) out.push('<div class="warnbox">当前为 DRY-RUN 模式：引擎会计算并记录决策，但不会真正切换节点。确认逻辑无误后，把 config.yaml 里 server.dry_run 改为 false 即可上线。</div>');
+    if(s.paused) out.push('<div class="warnbox">自动决策已暂停（手动「立即决策」仍可用）。</div>');
+    if(s.last_error) out.push(`<div class="warnbox err">${esc(s.last_error)}</div>`);
+  }
+  if(!state.wsUp) out.push('<div class="warnbox info">实时推送已断开，正在重连…（数据退化为 30s 轮询）</div>');
+  if(state.wsErr){ out.push(`<div class="warnbox err">${esc(state.wsErr)}</div>`); }
+  bar.innerHTML = out.join('');
+}
+
+function renderTabs(){
+  const box = $('tgt-tabs');
+  if(state.targets.length <= 1){ box.style.display='none'; box.innerHTML=''; return; }
+  box.style.display = 'flex';
+  box.innerHTML = state.targets.map(t =>
+    `<button class="tab${t===state.target?' on':''}" data-t="${esc(t)}">${esc(t)}</button>`).join('');
+  box.querySelectorAll('.tab').forEach(b => b.onclick = () => {
+    state.target = b.dataset.t; state.showAll = false; render();
+  });
+}
+
+function renderStats(){
+  const s = state.status;
+  if(s){
+    $('s-cycles').textContent = s.cycles;
+    $('s-last').textContent = s.last_run
+      ? '上次 ' + relTime(s.last_run) : '尚未运行';
+    $('s-last').title = fullTime(s.last_run);
+    const c = s.counts || {};
+    $('s-sw').textContent = `${c.switch||0} / ${c.rollback||0}`;
+    $('s-sw').title = `switch ${c.switch||0} · rollback ${c.rollback||0} · hold ${c.hold||0}（累计）`;
+    const nb = s.blacklist ? Object.keys(s.blacklist).length : 0;
+    $('s-bl').textContent = '黑名单 ' + nb;
+  }
+  const n = state.nodes;
+  if(n && n.length){
+    const alive = n.filter(x=>x.alive).length;
+    $('s-nodes').textContent = n.length;
+    $('s-alive').textContent = `存活 ${alive} / ${n.length}`;
+  }
+  // 引擎状态
+  const bdMode = $('bd-mode'), bdPanel = $('bd-panel'), bdOc = $('bd-oc'), bdJev = $('bd-jev');
+  if(!s){
+    bdPanel.className = 'badge b-err'; bdPanel.textContent = '面板失联';
+  }else{
+    bdPanel.className = 'badge b-ok'; bdPanel.textContent = '面板正常';
+    if(s.oc_ok === true){ bdOc.className = 'badge b-ok';
+      bdOc.textContent = 'OpenClash 正常' + (s.oc_version? ' · '+s.oc_version : ''); }
+    else if(s.oc_ok === false){ bdOc.className = 'badge b-err'; bdOc.textContent = 'OpenClash 异常'; }
+    else { bdOc.className = 'badge b-off'; bdOc.textContent = 'OpenClash 未测'; }
+    if(!s.jev_available){ bdJev.className = 'badge b-off'; bdJev.textContent = 'Jev 未启用'; }
+    else if(s.jev_ok === false){ bdJev.className = 'badge b-err'; bdJev.textContent = 'Jev 异常'; }
+    else if(s.jev_ok === true){ bdJev.className = 'badge b-ok'; bdJev.textContent = 'Jev 正常'; }
+    else { bdJev.className = 'badge b-info'; bdJev.textContent = 'Jev 待验证'; }
+
+    if(s.paused){ bdMode.className = 'badge b-warn'; bdMode.textContent = '已暂停'; }
+    else if(s.dry_run){ bdMode.className = 'badge b-warn'; bdMode.textContent = 'DRY-RUN 只观测'; }
+    else { bdMode.className = 'badge b-ok'; bdMode.textContent = 'LIVE 自动切换'; }
+
+    $('s-engine').textContent = s.paused ? '已暂停' : (s.dry_run ? 'DRY-RUN' : 'LIVE');
+    $('s-engine').style.color = s.paused ? 'var(--amber)' : (s.dry_run ? 'var(--amber)' : 'var(--down)');
+    $('s-engine-n').textContent = `每 ${s.interval}s 一轮 · 冷却 ${s.cooldown}s`;
+    $('btn-pause').textContent = s.paused ? '恢复引擎' : '暂停引擎';
+
+    // 权重图例跟随配置
+    if(s.weights){
+      $('lg-formula').textContent =
+        `综合 = 延迟×${s.weights.latency} + 探活×${s.weights.probe} + 先验×${s.weights.prior}`;
+    }
+  }
+  $('lg-tgt').textContent = '目标 ' + (state.target || '–');
+}
+
+function renderFeed(){
+  const tb = $('tb-dec');
+  const list = targetDecisions();
+  if(!list.length){
+    tb.innerHTML = `<tr><td colspan="4" class="empty">${state.target?'等待首轮决策…':'等待数据…'}</td></tr>`;
     return;
   }
-  const rows = Object.entries(table).sort((a,b)=>b[1]-a[1]);
-  box.innerHTML = rows.map(([k,v])=>{
-    const c = REGION_COLOR[k] || '#5b6473';
-    const cn = REGION_CN[k] || k;
-    return `<div class="prior">
-      <span class="lb">${esc(cn)}</span>
-      ${scoreBar(v,c)}
-      <span class="vl" style="color:${c}">${v.toFixed(2)}</span>
-    </div>`;
-  }).join('');
-  $('bd-jev').className = 'badge b-ok';
-  $('bd-jev').textContent = 'Jev 正常';
-}
-
-function renderProbe(p){
-  const box = $('probe-box');
-  if(!p){ box.innerHTML = '<div class="empty">本轮未执行探活</div>'; return; }
-  const cls = p.blocked ? 'b-err' : (p.ok ? 'b-ok' : 'b-err');
-  const label = {ok:'放行',blocked:'被风控',unreachable:'不可达',unknown:'未知'}[p.label]||p.label;
-  box.innerHTML = `
-    <div style="margin-bottom:9px">
-      <span class="badge ${cls}">${esc(label)}</span>
-      ${p.status?`<span class="mono" style="margin-left:8px;color:var(--tx2)">HTTP ${p.status}</span>`:''}
-    </div>
-    <div class="kv"><span class="k">验证节点</span><span class="v mono">${esc(p.node||'–')}</span></div>
-    <div class="kv"><span class="k">响应耗时</span><span class="v">${p.latency_ms!=null?p.latency_ms+' ms':'–'}</span></div>
-    ${p.error?`<div class="kv"><span class="k">错误</span><span class="v" style="color:var(--up)">${esc(p.error)}</span></div>`:''}
-    ${p.body_snippet?`<div class="hint mono" style="margin-top:7px;word-break:break-all">${esc(p.body_snippet.slice(0,180))}</div>`:''}
-  `;
-}
-
-function renderCandidates(list){
-  const tb = $('tb-cand');
-  if(!list || !list.length){
-    tb.innerHTML = '<tr><td colspan="7" class="empty">等待数据…</td></tr>'; return;
-  }
-  tb.innerHTML = list.slice(0,22).map(c=>{
-    const rc = REGION_COLOR[c.region] || '#5b6473';
-    const dead = !c.alive || c.final<=0;
-    const isPick = lastDecision && lastDecision.to_node === c.name;
-    return `<tr${isPick?' style="background:#f4f8ff"':''}>
-      <td><span class="node${isPick?' pick':''}">${esc(c.name)}${isPick?' ◀':''}</span></td>
-      <td><span style="color:${rc};font-weight:600;font-size:11.5px">${esc(REGION_CN[c.region]||c.region)}</span></td>
-      <td class="mono" style="color:${dead?'var(--tx3)':'var(--tx)'}">${c.delay!=null?c.delay+' ms':'—'}</td>
-      <td><div style="display:flex;align-items:center;gap:7px">
-        ${scoreBar(c.delay_score,'#2467d6')}<span class="mono" style="color:var(--tx2)">${c.delay_score.toFixed(2)}</span></div></td>
-      <td><div style="display:flex;align-items:center;gap:7px">
-        ${scoreBar(c.prior,'#7c4dcc')}<span class="mono" style="color:var(--tx2)">${c.prior.toFixed(2)}</span></div></td>
-      <td><div style="display:flex;align-items:center;gap:7px">
-        ${scoreBar(c.final,'#0f9d58')}<span class="mono" style="font-weight:650">${c.final.toFixed(3)}</span></div></td>
-      <td style="color:var(--tx3);font-size:11.5px">${esc(c.note||'')}</td>
-    </tr>`;
-  }).join('');
-}
-
-function renderDecisions(list){
-  const tb = $('tb-dec');
-  if(!list || !list.length){
-    tb.innerHTML = '<tr><td colspan="4" class="empty">等待首轮决策…</td></tr>'; return;
-  }
-  lastDecision = list[0];
   tb.innerHTML = list.slice(0,40).map(d=>{
     const a = d.action||'hold';
     const arrow = a==='rollback'
@@ -310,8 +525,8 @@ function renderDecisions(list){
         ? `<span class="mono" style="color:var(--tx3)">${esc(d.from_node)}</span> → <span class="node pick">${esc(d.to_node)}</span>`
         : `<span class="mono" style="color:var(--tx2)">${esc(d.from_node||'–')}</span>`);
     return `<tr>
-      <td class="mono" style="color:var(--tx3)">${esc(d.time)}</td>
-      <td><span class="act a-${a}">${a}</span></td>
+      <td class="mono" title="${esc(fullTime(d.ts))}" style="color:var(--tx3)">${esc(relTime(d.ts))}</td>
+      <td><span class="act a-${esc(a)}">${esc(a)}</span></td>
       <td>${arrow}</td>
       <td style="color:var(--tx2);font-size:12px">${esc(d.reason)}${
         d.path ? `<div class="pathbox">${esc(d.path)}</div>` : ''}</td>
@@ -319,118 +534,405 @@ function renderDecisions(list){
   }).join('');
 }
 
-function renderGroups(g){
+function renderPrior(){
+  const box = $('prior-box');
+  const lg = latestDecision();
+  const table = lg ? lg.prior_table : null;
+  if(!table || !Object.keys(table).length){
+    box.innerHTML = '<div class="empty">Jev 未返回（未启用或调用失败）</div>';
+    return;
+  }
+  const rows = Object.entries(table).sort((a,b)=>b[1]-a[1]);
+  box.innerHTML = rows.map(([k,v])=>{
+    const c = REGION_COLOR[k] || 'var(--tx2)';
+    const cn = REGION_CN[k] || k;
+    return `<div class="prior">
+      <span class="lb">${esc(cn)}</span>
+      ${scoreBar(v,c)}
+      <span class="vl" style="color:${c}">${Number(v).toFixed(2)}</span>
+    </div>`;
+  }).join('');
+}
+
+function renderProbe(){
+  const box = $('probe-box');
+  const lg = latestDecision();
+  const p = lg ? lg.probe : null;
+  const hist = targetDecisions().filter(d=>d.probe).slice(0,6);
+  if(!p){
+    box.innerHTML = '<div class="empty">本轮未执行探活</div>';
+    return;
+  }
+  const verdict = p.verdict || p.label || 'unknown';
+  const bad = (p.blocked || p.label==='blocked' || p.label==='unreachable' ||
+               verdict==='geo_blocked' || verdict==='unknown_403' || (!p.ok && p.error));
+  const cls = bad ? 'b-err' : (p.ok ? 'b-ok' : 'b-warn');
+  const text = VERDICT_CN[verdict] || LABEL_CN[p.label] || verdict || LABEL_CN.unknown;
+  const dryHint = (p.node==='__dry_run_current__')
+    ? '<div class="hint" style="margin-top:7px">DRY-RUN 下探活测的是<b>本机出口</b>，不代表候选节点的实际可达性。</div>' : '';
+  const histHtml = hist.length ? `<div class="probe-hist">` + hist.map(d=>{
+    const pr = d.probe, v = pr.verdict || pr.label || 'unknown';
+    const pbad = pr.blocked || pr.label==='blocked' || v==='geo_blocked' || v==='unknown_403' || (!pr.ok && pr.error);
+    return `<div class="row">
+      <span class="t">${esc(relTime(d.ts))}</span>
+      <span class="mono" style="flex:1;word-break:break-all">${esc(probeNodeCN(pr.node))}</span>
+      <span class="badge ${pbad?'b-err':'b-ok'}" style="font-size:10px">${esc(VERDICT_CN[v]||LABEL_CN[pr.label]||v)}</span>
+    </div>`;
+  }).join('') + '</div>' : '';
+  box.innerHTML = `
+    <div style="margin-bottom:9px">
+      <span class="badge ${cls}">${esc(text)}</span>
+      ${p.status?`<span class="mono" style="margin-left:8px;color:var(--tx2)">HTTP ${p.status}</span>`:''}
+    </div>
+    <div class="kv"><span class="k">验证节点</span><span class="v mono">${esc(probeNodeCN(p.node))}</span></div>
+    <div class="kv"><span class="k">响应耗时</span><span class="v">${p.latency_ms!=null?p.latency_ms+' ms':'–'}</span></div>
+    ${p.error?`<div class="kv"><span class="k">错误</span><span class="v" style="color:var(--up)">${esc(p.error)}</span></div>`:''}
+    ${p.body_snippet?`<div class="hint mono" style="margin-top:7px;word-break:break-all">${esc(p.body_snippet.slice(0,180))}</div>`:''}
+    ${dryHint}
+    ${histHtml}
+  `;
+}
+
+function renderCand(){
+  const tb = $('tb-cand');
+  const lg = latestDecision();
+  let list = (lg && lg.candidates) || [];
+  const total = list.length;
+  // 筛选
+  const q = state.q.trim().toLowerCase();
+  if(q) list = list.filter(c => (c.name||'').toLowerCase().includes(q));
+  if(state.region) list = list.filter(c => c.region === state.region);
+  if(state.aliveOnly) list = list.filter(c => c.alive);
+  // 地区下拉选项（动态补全）
+  const sel = $('cand-region');
+  const regions = [...new Set(((lg && lg.candidates)||[]).map(c=>c.region))];
+  const optHtml = '<option value="">全部地区</option>' + regions.map(r =>
+    `<option value="${esc(r)}"${state.region===r?' selected':''}>${esc(REGION_CN[r]||r)}</option>`).join('');
+  if(sel.dataset.last !== optHtml){ sel.innerHTML = optHtml; sel.dataset.last = optHtml; }
+
+  const shown = state.showAll ? list : list.slice(0,22);
+  $('cand-count').textContent = total
+    ? `显示 ${shown.length} / ${list.length}${list.length!==total?'（筛前 '+total+'）':''}` : '';
+  $('btn-all').textContent = state.showAll ? '收起' : '显示全部';
+  $('btn-all').style.display = list.length > 22 ? '' : 'none';
+
+  if(!shown.length){
+    tb.innerHTML = `<tr><td colspan="9" class="empty">${total?'没有符合筛选的节点':'等待数据…'}</td></tr>`;
+    return;
+  }
+  const cur = curResolved();
+  const nodeHist = {}; for(const n of state.nodes) nodeHist[n.name] = n.hist;
+  tb.innerHTML = shown.map(c=>{
+    const rc = REGION_COLOR[c.region] || 'var(--tx2)';
+    const dead = !c.alive || c.final<=0;
+    const isCur = cur && c.name === cur;
+    const probed = !!c.probed;
+    const pv = c.probe_score;
+    const probeTxt = probed ? Number(pv).toFixed(2)
+      : (pv!=null ? Number(pv).toFixed(2)+'*' : '–');
+    return `<tr class="${isCur?'pick-row':''}">
+      <td><span class="node${isCur?' pick':''}">${esc(c.name)}</span>${isCur?'<span class="chip-cur">当前</span>':''}</td>
+      <td><span style="color:${rc};font-weight:600;font-size:11.5px">${esc(REGION_CN[c.region]||c.region)}</span></td>
+      <td class="mono" style="color:${dead?'var(--tx3)':'var(--tx)'}">${c.delay!=null?c.delay+' ms':'—'}</td>
+      <td>${spark(nodeHist[c.name])}</td>
+      <td><div style="display:flex;align-items:center;gap:7px">
+        ${scoreBar(c.delay_score,'var(--blue)')}<span class="mono" style="color:var(--tx2)">${Number(c.delay_score).toFixed(2)}</span></div></td>
+      <td><div style="display:flex;align-items:center;gap:7px">
+        ${scoreBar(probed&&pv!=null?pv:(probed?0:pv||0),'var(--teal)')}<span class="mono" style="color:var(--tx2)">${probeTxt}</span></div></td>
+      <td><div style="display:flex;align-items:center;gap:7px">
+        ${scoreBar(c.prior,'var(--purple)')}<span class="mono" style="color:var(--tx2)">${Number(c.prior).toFixed(2)}</span></div></td>
+      <td><div style="display:flex;align-items:center;gap:7px">
+        ${scoreBar(c.final,'var(--down)')}<span class="mono" style="font-weight:650">${Number(c.final).toFixed(3)}</span></div></td>
+      <td style="color:var(--tx3);font-size:11.5px">${esc(c.note||'')}</td>
+    </tr>`;
+  }).join('');
+  // 强制切换下拉跟随候选
+  const fs = $('force-node');
+  const names = ((lg && lg.candidates)||[]).filter(c=>c.alive).map(c=>c.name);
+  const fsHtml = '<option value="">选择节点…</option>' + names.map(n =>
+    `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  if(fs.dataset.last !== fsHtml){ fs.innerHTML = fsHtml; fs.dataset.last = fsHtml; }
+}
+
+function renderGroups(){
   const tb = $('tb-grp');
+  const g = state.groups;
   const ks = Object.keys(g||{});
+  const lg = latestDecision();
   if(!ks.length){ tb.innerHTML = '<tr><td colspan="4" class="empty">等待数据…</td></tr>'; return; }
   tb.innerHTML = ks.map(k=>{
     const v = g[k];
-    const isTarget = v.__target;
-    return `<tr${isTarget?' style="background:#f4f8ff"':''}>
-      <td style="font-weight:600">${esc(k)}${isTarget?' ◀ 目标':''}</td>
-      <td><span class="badge b-info" style="font-size:10.5px">${esc(v.type)}</span></td>
-      <td class="mono" style="color:var(--tx2)">${esc(v.now||'–')}</td>
+    const isTarget = v.__target || (lg && k === lg.group);
+    const resolved = v.resolved && v.resolved !== v.now
+      ? `${esc(v.resolved)} <span class="hint">（via ${esc(v.now)}）</span>` : esc(v.now||'–');
+    return `<tr class="${isTarget?'pick-row':''}">
+      <td style="font-weight:600">${esc(k)}${isTarget?'<span class="chip-cur">目标</span>':''}</td>
+      <td><span class="badge b-info" style="font-size:10.5px">${esc(v.type||'–')}</span></td>
+      <td class="mono" style="color:var(--tx2)">${resolved}</td>
       <td style="color:var(--tx3)">${(v.members||[]).length}</td>
     </tr>`;
   }).join('');
 }
 
+function renderBlacklist(){
+  const box = $('blk-box');
+  const s = state.status;
+  const bl = (s && s.blacklist) || {};
+  const ks = Object.keys(bl);
+  $('btn-unblk-all').style.display = ks.length ? '' : 'none';
+  if(!ks.length){ box.innerHTML = '<div class="empty" style="padding:12px">黑名单为空</div>'; return; }
+  box.innerHTML = ks.map(k=>{
+    const v = bl[k] || {};
+    const rem = v.remaining!=null ? v.remaining : 0;
+    const fc = v.fail_count!=null ? v.fail_count : ((s.fail_count||{})[k]||0);
+    return `<div class="row">
+      <span class="nm mono">${esc(k)}</span>
+      <span class="tm">剩余 ${mmss(rem)} · 失败 ${fc}</span>
+      <button class="mini" data-n="${esc(k)}">解除</button>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('button[data-n]').forEach(b => b.onclick = () => unblacklist(b.dataset.n));
+}
+
+// ---------- 数据加载 ----------
 async function refreshStatus(){
   try{
-    const r = await fetch('/api/status'); const s = await r.json();
-    $('s-cycles').textContent = s.cycles;
-    $('s-last').textContent = s.last_run
-      ? '上次 ' + new Date(s.last_run*1000).toLocaleTimeString('zh-CN')
-      : '尚未运行';
-    const n = s.blacklist ? Object.keys(s.blacklist).length : 0;
-    $('s-bl').textContent = '黑名单 ' + n;
-    $('bd-oc').className = 'badge b-ok';
-    $('bd-oc').textContent = 'OpenClash 正常';
-    $('bd-mode').className = s.dry_run ? 'badge b-warn' : 'badge b-ok';
-    $('bd-mode').textContent = s.dry_run ? 'DRY-RUN 只观测' : 'LIVE 自动切换';
-    if(s.dry_run){
-      $('drybar').innerHTML = '<div class="warnbox">当前为 DRY-RUN 模式：引擎会计算并记录决策，但不会真正切换节点。确认逻辑无误后，把 config.yaml 里 server.dry_run 改为 false 即可上线。</div>';
-    } else { $('drybar').innerHTML = ''; }
-    if(s.last_error){
-      $('drybar').innerHTML += `<div class="warnbox" style="background:#fdeaea;border-color:#f3c9c9;color:#b32020">${esc(s.last_error)}</div>`;
+    const r = await fetch('/api/status');
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    state.status = await r.json();
+    state.statusErr = '';
+    if(state.status.targets && state.status.targets.length){
+      state.targets = state.status.targets;
+      if(!state.target || !state.targets.includes(state.target)) state.target = state.targets[0];
     }
   }catch(e){
-    $('bd-oc').className = 'badge b-err';
-    $('bd-oc').textContent = 'OpenClash 断开';
+    state.status = null;
+    state.statusErr = String(e.message||e);
   }
+  render();
 }
 
 async function loadHistory(){
   try{
     const d = await (await fetch('/api/decisions?limit=40')).json();
-    renderDecisions(d);
-    if(d.length){
-      renderCandidates(d[0].candidates||[]);
-      renderPrior(d[0].prior_table);
-      renderProbe(d[0].probe);
-    }
-    // 页面初载时把节点池统计也补上
-    try{
-      const n = await (await fetch('/api/nodes')).json();
-      if(n && n.length){
-        const alive = n.filter(x=>x.alive).length;
-        $('s-nodes').textContent = n.length;
-        $('s-alive').textContent = `存活 ${alive} / ${n.length}`;
-      }
-    }catch(e){}
+    if(Array.isArray(d)) mergeDecisions(d);
   }catch(e){}
+  try{
+    const n = await (await fetch('/api/nodes')).json();
+    if(Array.isArray(n)) state.nodes = n;
+  }catch(e){}
+  render();
 }
 
 async function loadGroups(){
   try{
     const g = await (await fetch('/api/groups')).json();
-    renderGroups(g);
+    if(g && typeof g === 'object') state.groups = g;
+    renderGroups();
   }catch(e){}
 }
 
+// ---------- WebSocket（指数退避 + 心跳检测） ----------
+let wsCur = null, wsT = null, wsDelay = 3000;
 function connectWS(){
-  const proto = location.protocol==='https:'?'wss:':'ws:';
-  const ws = new WebSocket(`${proto}//${location.host}/ws/live`);
-  ws.onmessage = ev => {
+  const proto = location.protocol==='https:' ? 'wss:' : 'ws:';
+  try{
+    wsCur = new WebSocket(`${proto}//${location.host}/ws/live`);
+  }catch(e){ scheduleReconnect(); return; }
+  wsCur.onopen = () => { state.wsUp = true; state.wsErr = ''; state.lastMsg = Date.now();
+    wsDelay = 3000; render(); };
+  wsCur.onmessage = ev => {
+    state.lastMsg = Date.now();
     let m; try{ m = JSON.parse(ev.data); }catch(e){ return; }
-    if(m.type==='decision'){
-      const d = m.data;
-      const cur = (JSON.parse(window.__dec||'[]'));
-      cur.unshift(d);
-      window.__dec = JSON.stringify(cur.slice(0,40));
-      renderDecisions(cur);
-      renderCandidates(d.candidates||[]);
-      renderPrior(d.prior_table);
-      renderProbe(d.probe);
-    } else if(m.type==='nodes'){
-      const alive = m.data.filter(x=>x.alive).length;
-      $('s-nodes').textContent = m.data.length;
-      $('s-alive').textContent = `存活 ${alive} / ${m.data.length}`;
-    } else if(m.type==='groups'){
-      renderGroups(m.data);
-    } else if(m.type==='error'){
-      $('drybar').innerHTML = `<div class="warnbox" style="background:#fdeaea;border-color:#f3c9c9;color:#b32020">${esc(m.message)}</div>`;
+    if(m.type === 'hello'){
+      if(m.config && Array.isArray(m.config.targets) && m.config.targets.length){
+        state.targets = m.config.targets;
+        if(!state.target || !state.targets.includes(state.target)) state.target = state.targets[0];
+      }
+      render();
+    } else if(m.type === 'ping'){
+      // keepalive，仅刷新 lastMsg
+    } else if(m.type === 'decision'){
+      mergeDecisions([m.data]);
+      bumpTitle();
+      render();
+    } else if(m.type === 'nodes'){
+      state.nodes = m.data || [];
+      render();
+    } else if(m.type === 'groups'){
+      state.groups = m.data || {};
+      renderGroups();
+    } else if(m.type === 'error'){
+      state.wsErr = m.message || '未知错误';
+      render();
     }
   };
-  ws.onclose = () => setTimeout(connectWS, 3000);
-  ws.onerror = () => {};
+  wsCur.onclose = () => { state.wsUp = false; render(); scheduleReconnect(); };
+  wsCur.onerror = () => { try{ wsCur.close(); }catch(e){} };
 }
+function scheduleReconnect(){
+  clearTimeout(wsT);
+  wsT = setTimeout(connectWS, wsDelay);
+  wsDelay = Math.min(wsDelay * 1.7, 30000);
+}
+// 假死检测：服务端每 20s 发 ping，45s 无任何消息则强制重连
+setInterval(() => {
+  if(state.wsUp && Date.now() - state.lastMsg > 45000){
+    state.wsUp = false;
+    try{ if(wsCur) wsCur.close(); }catch(e){}
+    render();
+  }
+}, 10000);
 
+function bumpTitle(){
+  if(document.hidden) document.title = '● SmartRoute · OpenClash 智能选路';
+}
+document.addEventListener('visibilitychange', () => {
+  if(!document.hidden) document.title = 'SmartRoute · OpenClash 智能选路';
+});
+
+// ---------- 操作 ----------
 $('btn-run').onclick = async () => {
-  $('btn-run').disabled = true;
-  $('btn-run').textContent = '决策中…';
-  try{ await fetch('/api/run',{method:'POST'}); await loadHistory(); await refreshStatus(); }
-  catch(e){}
-  $('btn-run').disabled = false;
-  $('btn-run').textContent = '立即决策';
+  const btn = $('btn-run');
+  btn.disabled = true; btn.textContent = '决策中…';
+  state.wsErr = '';
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 240000);
+  try{
+    const r = await fetch('/api/run', {method:'POST', signal: ctrl.signal});
+    const j = await r.json().catch(()=>({ok:false,error:'HTTP '+r.status}));
+    if(!j.ok) state.wsErr = j.error || ('HTTP '+r.status);
+    await loadHistory(); await refreshStatus(); await loadGroups();
+  }catch(e){
+    state.wsErr = e.name === 'AbortError'
+      ? '决策超时（240s），已放弃等待（后端可能仍在执行）'
+      : String(e.message || e);
+  }
+  clearTimeout(timer);
+  btn.disabled = false; btn.textContent = '立即决策';
+  render();
 };
 
+$('btn-pause').onclick = async () => {
+  const on = !(state.status && state.status.paused);
+  try{
+    await fetch('/api/pause', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({on})});
+    await refreshStatus();
+  }catch(e){ state.wsErr = String(e.message||e); render(); }
+};
+
+$('btn-hc').onclick = async () => {
+  if(!confirm('触发 provider 全量测速？约需 1 分钟，期间延迟数据可能短暂缺失。')) return;
+  const btn = $('btn-hc');
+  btn.disabled = true; btn.textContent = '测速中…';
+  try{
+    const r = await fetch('/api/healthcheck', {method:'POST'});
+    const j = await r.json();
+    state.wsErr = j.ok ? '' : '测速失败';
+    if(!j.ok) render();
+  }catch(e){ state.wsErr = String(e.message||e); render(); }
+  btn.disabled = false; btn.textContent = '触发 provider 测速';
+  await loadHistory();
+};
+
+async function runHealth(){
+  const box = $('health-box');
+  box.style.display = '';
+  box.innerHTML = '<div class="empty" style="padding:8px">自检中（含 Jev 调用与探活请求）…</div>';
+  try{
+    const r = await fetch('/api/health?force=1');
+    const h = await r.json();
+    const row = (name, res) => {
+      const ok = res && res.ok;
+      const detail = res ? (res.version || res.model || (res.label?res.label:'') ||
+                    (res.error?String(res.error).slice(0,80):'')) : '未执行';
+      return `<div class="row"><span>${esc(name)}</span>` +
+        `<span class="badge ${ok?'b-ok':'b-err'}" style="font-size:10px">${ok?'正常':'异常'}</span>` +
+        `<span class="tm" style="flex:1;text-align:right;color:var(--tx3)">${esc(detail)}</span></div>`;
+    };
+    box.innerHTML = row('OpenClash', h.openclash) + row('Jev', h.jev) + row('探活', h.probe);
+  }catch(e){
+    box.innerHTML = `<div class="warnbox err" style="margin:0">自检失败：${esc(String(e.message||e))}</div>`;
+  }
+}
+$('btn-health').onclick = runHealth;
+
+async function unblacklist(node){
+  try{
+    await fetch('/api/unblacklist', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({node})});
+    await refreshStatus();
+  }catch(e){ state.wsErr = String(e.message||e); render(); }
+}
+$('btn-unblk-all').onclick = () => unblacklist('*');
+
+$('btn-force').onclick = async () => {
+  const node = $('force-node').value;
+  const res = $('force-result');
+  if(!node || !state.target){ res.textContent = '请先选择节点'; return; }
+  if(!confirm(`把目标「${state.target}」强制切换到「${node}」？\n此操作绕过打分与验证闭环。`)) return;
+  const btn = $('btn-force');
+  btn.disabled = true;
+  res.textContent = '执行中…';
+  try{
+    const r = await fetch('/api/force', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({target: state.target, node})});
+    const j = await r.json();
+    if(j.ok){
+      res.innerHTML = (j.dry_run ? 'DRY-RUN 预演路径：' : '已切换，路径：') +
+        `<span class="mono">${esc(j.plan)}</span>` +
+        (j.dry_run ? '（未真实执行）' : '（下轮决策将自动验证，不通过会回滚）');
+    }else{
+      res.innerHTML = `<span style="color:var(--up)">${esc(j.error||'失败')}</span>`;
+    }
+  }catch(e){
+    res.innerHTML = `<span style="color:var(--up)">${esc(String(e.message||e))}</span>`;
+  }
+  btn.disabled = false;
+  await loadHistory(); await refreshStatus(); await loadGroups();
+};
+
+// 候选筛选
+$('cand-q').oninput = e => { state.q = e.target.value; renderCand(); };
+$('cand-region').onchange = e => { state.region = e.target.value; renderCand(); };
+$('cand-alive').onchange = e => { state.aliveOnly = e.target.checked; renderCand(); };
+$('btn-all').onclick = () => { state.showAll = !state.showAll; renderCand(); };
+
+// 导出
+function download(name, text, mime){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], {type: mime}));
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+$('btn-json').onclick = () =>
+  download('smartroute-decisions.json',
+           JSON.stringify(state.decisions, null, 2), 'application/json');
+$('btn-csv').onclick = () => {
+  const head = ['time','target','group','action','from','to','top','reason'];
+  const rows = state.decisions.map(d => [
+    new Date(d.ts*1000).toISOString(), d.target||'', d.group||'', d.action||'',
+    d.from_node||'', d.to_node||'',
+    (d.candidates && d.candidates[0] ? d.candidates[0].name : ''),
+    String(d.reason||'').replace(/\s+/g, ' '),
+  ]);
+  const csv = [head, ...rows].map(r =>
+    r.map(x => `"${String(x).replace(/"/g,'""')}"`).join(',')).join('\n');
+  download('smartroute-decisions.csv', '\ufeff' + csv, 'text/csv');
+};
+
+// ---------- 启动 ----------
 refreshStatus();
 loadHistory();
 loadGroups();
 connectWS();
 setInterval(refreshStatus, 10000);
 setInterval(loadHistory, 30000);
+setInterval(loadGroups, 30000);
+setInterval(render, 30000);   // 相对时间刷新
 </script>
 </body>
 </html>
