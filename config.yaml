@@ -39,6 +39,18 @@ engine:
   blacklist_sec: 1800
   interval_sec: 120
   probe_cache_sec: 1800   # 探活结果缓存（进入候选打分）
+  ip_echo_url: https://api.ipify.org   # 探活出口 IP 回显（审计"测的是谁"），置空关闭
+  # 判据校准守卫：窗口内多个不同节点被"实锤"-> 判据可疑，暂缓拉黑
+  criterion_window: 600
+  criterion_max_distinct: 3
+  # 巡游探检：主动逐个验证候选节点是否被平台风控
+  patrol:
+    enabled: false
+    mode: roam              # roam=借生产组短暂切换验证（有打扰）; shadow=旁路监听（零打扰）
+    top_k: 3                # 每轮体检的候选数（优先未实测、延迟低的）
+    interval_sec: 1800      # 体检间隔（每个 target 独立节流）
+    shadow_url: ""          # 例: http://127.0.0.1:17890（Mihomo http listener）
+    shadow_group: ""        # 例: ♟️ 探活组（成员需包含 DIRECT 以做对照组）
 jev:
   enabled: true
   api: https://api.typesafe.ai/v1/systemone

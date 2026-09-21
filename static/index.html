@@ -259,6 +259,15 @@
           <div class="empty">尚未执行探活</div>
         </div>
       </div>
+
+      <div class="card" style="margin-top:16px">
+        <div class="card-h"><span class="dot" style="background:var(--up)"></span>Gemini 风控档案
+          <div class="toolbar"><span class="hint" style="margin:0">判定 + 证据原文，可审计</span></div>
+        </div>
+        <div class="card-b" id="risk-box">
+          <div class="empty">暂无风控记录（切换验证 / 巡检后自动填充）</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -323,6 +332,7 @@
         <div class="ctrl-row">
           <button id="btn-pause">暂停引擎</button>
           <button id="btn-hc">触发 provider 测速</button>
+          <button id="btn-patrol">立即风控巡检</button>
           <button id="btn-health">运行自检</button>
         </div>
         <div id="health-box" class="hbox" style="display:none"></div>
@@ -358,15 +368,18 @@ const REGION_CN = {japan:'日本',singapore:'新加坡',usa:'美国',taiwan:'中
 const REGION_COLOR = {japan:'var(--r-japan)',singapore:'var(--r-singapore)',usa:'var(--r-usa)',
   taiwan:'var(--r-taiwan)',korea:'var(--r-korea)',hongkong:'var(--r-hongkong)'};
 const VERDICT_CN = {
-  ok:'完全可用', auth_ok:'IP 已放行（缺鉴权/配额）', geo_blocked:'地区受限 · 被风控',
-  unknown_403:'403 未判别（保守视为风控）', unreachable:'不可达', unknown:'未知',
+  ok:'完全可用', auth_ok:'IP 已放行（缺鉴权）', geo_blocked:'地区受限 · 风控实锤',
+  ip_flagged:'IP 滥用封禁 · 实锤', quota_limited:'配额受限（非风控）',
+  unknown_403:'403 未判别（保守视为风控）', unknown:'未判别（留证）', unreachable:'不可达',
 };
 const LABEL_CN = {ok:'放行',blocked:'被风控',unreachable:'不可达',unknown:'未知'};
+const SOURCE_CN = {switch:'切换验证', patrol:'巡检 roam', shadow:'巡检 旁路',
+  baseline:'对照组', dry_run:'DRY-RUN'};
 
 // ---------- 统一状态（WS 推送与轮询都走同一入口） ----------
 const state = {
   status:null, statusErr:'', targets:[], target:null,
-  decisions:[], nodes:[], groups:{},
+  decisions:[], nodes:[], groups:{}, risks:{},
   wsUp:false, wsErr:'',
   showAll:false, q:'', region:'', aliveOnly:false,
   lastMsg:0,
@@ -426,12 +439,13 @@ function spark(hist){
 function probeNodeCN(n){
   if(n === '__dry_run_current__') return '本机出口（DRY-RUN）';
   if(n === '__direct__') return '直连出口';
+  if(n === '__baseline__') return '对照组（直连）';
   return n || '–';
 }
 
 // ---------- 渲染 ----------
 function render(){ renderAlerts(); renderTabs(); renderStats(); renderFeed();
-  renderPrior(); renderProbe(); renderCand(); renderGroups(); renderBlacklist(); }
+  renderPrior(); renderProbe(); renderRisk(); renderCand(); renderGroups(); renderBlacklist(); }
 
 function renderAlerts(){
   const s = state.status, bar = $('alertbar'); const out = [];
@@ -440,6 +454,7 @@ function renderAlerts(){
   }else{
     if(s.dry_run) out.push('<div class="warnbox">当前为 DRY-RUN 模式：引擎会计算并记录决策，但不会真正切换节点。确认逻辑无误后，把 config.yaml 里 server.dry_run 改为 false 即可上线。</div>');
     if(s.paused) out.push('<div class="warnbox">自动决策已暂停（手动「立即决策」仍可用）。</div>');
+    if(s.criterion_suspect) out.push('<div class="warnbox err">Gemini 判据待校准：短时间多个节点命中同一套风控判据（或对照组同样命中），已暂缓拉黑。可能是 Google 改版 / 区域性故障，等任一节点探活转正常后自动解除。</div>');
     if(s.last_error) out.push(`<div class="warnbox err">${esc(s.last_error)}</div>`);
   }
   if(!state.wsUp) out.push('<div class="warnbox info">实时推送已断开，正在重连…（数据退化为 30s 轮询）</div>');
@@ -564,19 +579,20 @@ function renderProbe(){
     return;
   }
   const verdict = p.verdict || p.label || 'unknown';
-  const bad = (p.blocked || p.label==='blocked' || p.label==='unreachable' ||
-               verdict==='geo_blocked' || verdict==='unknown_403' || (!p.ok && p.error));
-  const cls = bad ? 'b-err' : (p.ok ? 'b-ok' : 'b-warn');
+  const strong = p.strong || verdict==='geo_blocked' || verdict==='ip_flagged';
+  const passed = p.passed!=null ? p.passed : (p.ok && !p.blocked);
+  const cls = strong ? 'b-err' : (passed ? 'b-ok' : 'b-warn');
   const text = VERDICT_CN[verdict] || LABEL_CN[p.label] || verdict || LABEL_CN.unknown;
   const dryHint = (p.node==='__dry_run_current__')
     ? '<div class="hint" style="margin-top:7px">DRY-RUN 下探活测的是<b>本机出口</b>，不代表候选节点的实际可达性。</div>' : '';
   const histHtml = hist.length ? `<div class="probe-hist">` + hist.map(d=>{
     const pr = d.probe, v = pr.verdict || pr.label || 'unknown';
-    const pbad = pr.blocked || pr.label==='blocked' || v==='geo_blocked' || v==='unknown_403' || (!pr.ok && pr.error);
+    const pstrong = pr.strong || v==='geo_blocked' || v==='ip_flagged';
+    const ppassed = pr.passed!=null ? pr.passed : (pr.ok && !pr.blocked);
     return `<div class="row">
       <span class="t">${esc(relTime(d.ts))}</span>
       <span class="mono" style="flex:1;word-break:break-all">${esc(probeNodeCN(pr.node))}</span>
-      <span class="badge ${pbad?'b-err':'b-ok'}" style="font-size:10px">${esc(VERDICT_CN[v]||LABEL_CN[pr.label]||v)}</span>
+      <span class="badge ${pstrong?'b-err':(ppassed?'b-ok':'b-warn')}" style="font-size:10px">${esc(VERDICT_CN[v]||LABEL_CN[pr.label]||v)}</span>
     </div>`;
   }).join('') + '</div>' : '';
   box.innerHTML = `
@@ -586,11 +602,41 @@ function renderProbe(){
     </div>
     <div class="kv"><span class="k">验证节点</span><span class="v mono">${esc(probeNodeCN(p.node))}</span></div>
     <div class="kv"><span class="k">响应耗时</span><span class="v">${p.latency_ms!=null?p.latency_ms+' ms':'–'}</span></div>
+    ${p.exit_ip?`<div class="kv"><span class="k">出口 IP</span><span class="v mono">${esc(p.exit_ip)}</span></div>`:''}
+    ${p.evidence?`<div class="kv"><span class="k">判定依据</span><span class="v mono" style="max-width:62%;text-align:right;word-break:break-all;font-weight:500">${esc(p.evidence)}</span></div>`:''}
     ${p.error?`<div class="kv"><span class="k">错误</span><span class="v" style="color:var(--up)">${esc(p.error)}</span></div>`:''}
     ${p.body_snippet?`<div class="hint mono" style="margin-top:7px;word-break:break-all">${esc(p.body_snippet.slice(0,180))}</div>`:''}
     ${dryHint}
     ${histHtml}
   `;
+}
+
+function renderRisk(){
+  const box = $('risk-box');
+  const risks = state.risks || {};
+  const ks = Object.keys(risks);   // 含 __baseline__（对照组记录）
+  if(!ks.length){
+    box.innerHTML = '<div class="empty">暂无风控记录（切换验证 / 巡检后自动填充）</div>';
+    return;
+  }
+  // 实锤在前，其次未判别，最后放行的
+  const order = {geo_blocked:0, ip_flagged:0, unknown:1, unreachable:1, quota_limited:2, auth_ok:3, ok:3};
+  ks.sort((a,b)=>{
+    const ra = risks[a], rb = risks[b];
+    return (order[ra.verdict]??9) - (order[rb.verdict]??9) || (rb.ts||0)-(ra.ts||0);
+  });
+  box.innerHTML = `<div class="scroll" style="max-height:230px">` + ks.slice(0,30).map(k=>{
+    const v = risks[k] || {};
+    const verdict = v.verdict || 'unknown';
+    const strong = v.strong || verdict==='geo_blocked' || verdict==='ip_flagged';
+    const passed = v.passed!=null ? v.passed : false;
+    return `<div class="row" style="display:flex;align-items:center;gap:8px;font-size:11px;padding:4px 0;border-bottom:1px dashed var(--bd)">
+      <span class="mono" style="flex:0 0 118px;word-break:break-all;font-weight:600">${esc(k==='__baseline__'?'（对照组）':k)}</span>
+      <span class="badge ${strong?'b-err':(passed?'b-ok':'b-warn')}" style="font-size:10px;flex:0 0 auto">${esc(VERDICT_CN[verdict]||verdict)}</span>
+      <span style="flex:1;color:var(--tx3);word-break:break-all;min-width:0" title="${esc(v.evidence||'')}">${esc((v.evidence||'').slice(0,46))}</span>
+      <span class="tm" style="color:var(--tx3);white-space:nowrap">${esc(SOURCE_CN[v.source]||v.source||'')} · ${esc(relTime(v.ts))}</span>
+    </div>`;
+  }).join('') + '</div>';
 }
 
 function renderCand(){
@@ -701,6 +747,7 @@ async function refreshStatus(){
     if(!r.ok) throw new Error('HTTP '+r.status);
     state.status = await r.json();
     state.statusErr = '';
+    if(state.status.node_risk) state.risks = state.status.node_risk;
     if(state.status.targets && state.status.targets.length){
       state.targets = state.status.targets;
       if(!state.target || !state.targets.includes(state.target)) state.target = state.targets[0];
@@ -762,6 +809,9 @@ function connectWS(){
     } else if(m.type === 'groups'){
       state.groups = m.data || {};
       renderGroups();
+    } else if(m.type === 'risk'){
+      state.risks = m.data || {};
+      renderRisk();
     } else if(m.type === 'error'){
       state.wsErr = m.message || '未知错误';
       render();
@@ -857,6 +907,22 @@ async function runHealth(){
   }
 }
 $('btn-health').onclick = runHealth;
+
+$('btn-patrol').onclick = async () => {
+  const btn = $('btn-patrol');
+  btn.disabled = true; btn.textContent = '巡检中…';
+  try{
+    const r = await fetch('/api/patrol', {method:'POST'});
+    const j = await r.json();
+    if(j.node_risk) state.risks = j.node_risk;
+    state.wsErr = (j.ok && !(j.events||[]).some(e=>e.error)) ? ''
+      : '巡检部分失败：' + ((j.events||[]).filter(e=>e.error).map(e=>e.error).join('；') || '未知错误');
+  }catch(e){
+    state.wsErr = '巡检失败：' + String(e.message||e);
+  }
+  btn.disabled = false; btn.textContent = '立即风控巡检';
+  render();
+};
 
 async function unblacklist(node){
   try{

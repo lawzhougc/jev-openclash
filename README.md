@@ -81,17 +81,33 @@ Mihomo 的 `PUT /proxies/{组}` 只能切到该组的**直接成员**。跨组�
 必须用 `resolve_now()` 递归下钻到真实节点。
 另外 Smart / URLTest 型自动组的 `now` 是 `Smart - Select` 这类内部值，需要特殊处理。
 
-### 4. 403 不能一律当成"被风控"
+### 4. 判定必须解析错误信封，且分清「地区风控 / 滥用封禁 / 缺鉴权 / 配额」
 
-Google API 的 403 有两种含义完全不同的情况：
+Google API 的错误体固定是 `{"error": {"code", "status", "message"}}`。
+**只看状态码会把最常见的地区风控判反** —— 它可能是 400 而不是 403：
 
-| 响应体特征 | 真实含义 | 处理 |
-|---|---|---|
-| `unregistered callers` / `API key` | IP 已放行，只是没给 key | **可用** |
-| `location` / `country` / `region` | IP 被地区限制 | 被风控 |
+| 响应特征 | 真实含义 | verdict | 处理 |
+|---|---|---|---|
+| `FAILED_PRECONDITION` + `User location is not supported`（**常为 400**） | IP 被地区限制 | `geo_blocked` | 实锤风控，压 0 + 加重惩罚 |
+| `PERMISSION_DENIED` + `location/country/region` 地区短语 | IP 被地区限制 | `geo_blocked` | 同上 |
+| `automated queries` / `blocked due to abuse` | IP 被滥用封禁 | `ip_flagged` | 实锤风控，同上 |
+| `unregistered callers` / `API key not valid` | IP 已放行，只是没 key | `auth_ok` | **可用** |
+| 429 / `RESOURCE_EXHAUSTED` | 配额受限（共享 IP 常态） | `quota_limited` | 可用但打折 |
+| 403 且无任何地区/滥用证据 | 无法判别 | `unknown` | 验证不过、回滚，**绝不拉黑** |
 
-只看状态码会把所有节点误判为被风控，导致全盘回滚 —— 这是会造成实际故障的 bug。
-`classify_body()` 解析响应体来做区分。
+判据要点（prober.classify_response）：
+
+1. **解析信封字段，不全文扫关键词** —— v1 扫 `location/region` 单词会误命中字段名；
+   现在只匹配多词精确短语，且任何状态码都先查 geo/abuse。
+2. **每次判定带证据原文**（evidence），面板「Gemini 风控档案」可审计。
+3. **对照组仲裁（L3）**：判定实锤前，经旁路监听把探活组切到 `DIRECT`
+   （家庭宽带出口）再探同一目标 —— 对照组同样命中 → 判据可疑，暂缓拉黑；
+   对照组正常 → 节点风控确认。
+4. **判据校准守卫**：10 分钟内 ≥3 个不同节点被同一套判据「实锤」→
+   全局 `criterion_suspect`，暂缓一切拉黑（大概率 Google 改版/区域性故障），
+   任一探活转 `ok/auth_ok` 自动解除。
+5. **出口 IP 回显**：探活同时记录链路出口 IP（`ip_echo_url`），
+   审计「测的到底是谁」——切换后出口没变（路由没生效）一眼可辨。
 
 ### 5. 本机开发时的网络隔离
 
@@ -175,10 +191,20 @@ engine:
   prior_weight: 0.15
   cooldown_sec: 90                  # 切换后多久不再切（防抖）
   hysteresis: 0.15                  # 新节点要领先多少比例才切（防抖）
-  fail_threshold: 3                 # 连续失败几次进黑名单
+  fail_threshold: 3                 # 失败计数达阈值进黑名单（实锤风控一次记 2）
   blacklist_sec: 1800
   interval_sec: 120
   probe_cache_sec: 1800             # 探活结果缓存（进入候选打分）
+  ip_echo_url: https://api.ipify.org   # 探活出口 IP 回显，置空关闭
+  criterion_window: 600             # 判据校准守卫窗口（秒）
+  criterion_max_distinct: 3         # 窗口内多少个不同节点"实锤"后判据可疑
+  patrol:                           # 巡游探检：主动逐个验证候选节点是否被风控
+    enabled: false
+    mode: roam                      # roam=借生产组切检（有打扰）; shadow=旁路监听（零打扰）
+    top_k: 3                        # 每轮体检候选数（优先未实测、延迟低）
+    interval_sec: 1800
+    shadow_url: ""                  # 例: http://127.0.0.1:17890
+    shadow_group: ""                # 例: ♟️ 探活组
 
 jev:
   enabled: true
@@ -217,13 +243,15 @@ server:
 | `GET /api/decisions` | 决策历史 |
 | `GET /api/switches` | 只含真实动作的决策 |
 | `GET /api/groups` | 目标策略组当前状态（含 `resolved` 下钻后的真实节点） |
+| `GET /api/risks` | Gemini 风控档案：判定 + 证据原文 + 出口 IP + 来源 |
 | `GET /api/health` | 连通性自检（OpenClash / Jev / 探活），结果缓存 60s，`?force=1` 强制重测 |
 | `POST /api/run` | 立即执行一轮决策（与调度器互斥，冲突返回 409） |
 | `POST /api/pause` | `{"on": true/false}` 暂停 / 恢复自动决策（手动不受影响） |
 | `POST /api/force` | `{"target","node"}` 强制切换；dry-run 只预演可达路径 |
 | `POST /api/unblacklist` | `{"node":"..."}` 或 `{"node":"*"}` 解除黑名单 |
 | `POST /api/healthcheck` | 触发 provider 全量测速（约 1 分钟） |
-| `WS /ws/live` | 实时推送决策、节点、组状态 |
+| `POST /api/patrol` | 立即触发一轮风控巡检（逐个验证候选节点） |
+| `WS /ws/live` | 实时推送决策、节点、组状态、风控档案 |
 
 ### 面板
 
@@ -252,10 +280,46 @@ server:
 | `TYPESAFE_API_KEY` | Jev API key（优先于 config） |
 | `OPENCLASH_SECRET` | OpenClash 控制器 secret（优先于 config，避免入库） |
 | `SMARTROUTE_TOKEN` | 面板访问令牌（优先于 config） |
+| `GEMINI_API_KEY` | 可选：激活二级「真实业务探针」（generateContent）；不配则用无 key 边缘探针 |
 | `SMARTROUTE_CONFIG` | config.yaml 路径 |
 | `SMARTROUTE_DATA` | 决策落盘目录（默认 `./data`） |
 
 决策历史落盘在 `data/decisions.jsonl`（已加入 .gitignore），重启后计数与历史自动恢复。
+
+### 三级探针与巡游探检（判断节点是否被 Gemini 风控）
+
+| 级别 | 手段 | 回答的问题 | 启用方式 |
+|---|---|---|---|
+| 1. edge | `GET /v1beta/models`（无 key） | Google 边缘收不收这个出口 | 默认 |
+| 2. key | `POST :generateContent`（1 token） | **Gemini 业务层认不认这个出口** | 设 `GEMINI_API_KEY` |
+| 3. shadow | Mihomo HTTP listener 绑定探活组 | **任意候选节点**认不认（零打扰）+ `DIRECT` 对照组 | 加一次监听配置（见下） |
+
+二级探针是唯一能真正回答「Gemini 认不认这个出口 IP」的信号（key 走 TLS header，
+不进 URL、不出库）。三级探针配合 `patrol.shadow_group` 切 `DIRECT` 即得
+「家庭宽带对照组」，用于判据仲裁（见上文「判定必须解析错误信封」）。
+
+**旁路监听一次性配置**（OpenClash 自定义配置，不被订阅更新覆盖）：
+
+```yaml
+# Mihomo 配置片段：探活专用 inbound，流量按绑定组路由
+listeners:
+  - name: probe-in
+    type: http
+    port: 17890
+    listen: 127.0.0.1
+    proxy: ♟️ 探活组
+proxies:
+  - name: ♟️ 探活组          # 不被任何生产规则引用，随便切
+    type: select
+    proxies: [DIRECT, 🇯🇵 日本节点, 🇸🇬 新加坡节点, 🇺🇲 Gemini节点]
+```
+
+然后 `engine.patrol` 配 `mode: shadow`、`shadow_url: http://127.0.0.1:17890`、
+`shadow_group: ♟️ 探活组`。不想加配置就用默认 `mode: roam`
+（借生产组「切过去→探活→切回来」，每次切换毫秒级打扰，dry-run 自动跳过）。
+
+风控判定结果统一进**风控档案**（`/api/risks` + 面板「Gemini 风控档案」卡）：
+节点 / verdict / 证据原文 / 出口 IP / 来源（切换验证 · 巡检 · 对照组），全程可审计。
 
 ---
 

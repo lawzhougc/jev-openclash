@@ -7,6 +7,47 @@
 
 ---
 
+## [1.2.0] - 2026-09-21
+
+Gemini 风控判定升级为「结构化错误信封 + 证据链 + 对照组仲裁」，
+从关键词猜谜变为有证据、有对照、可审计的判定。
+
+### 修复
+
+- **v1 判据会把最常见的地区风控判反**：`400 FAILED_PRECONDITION
+  "User location is not supported"` 被 `status in (400,401) -> auth_ok`
+  直接当成「IP 已放行」。现在任何状态码都先查 geo/abuse 短语
+- **403 全文扫 `location/region` 单词误命中字段名**：改为解析
+  `{"error":{code,status,message}}` 信封 + 多词精确短语，不再全文扫
+- `unknown_403` 一律当风控导致的全盘回滚：`unknown` 改为
+  **验证不通过但绝不拉黑**（留证待判）
+
+### 新增
+
+- **判定分级**：`geo_blocked`（地区风控实锤）/ `ip_flagged`（滥用封禁）/
+  `quota_limited`（配额受限，不拉黑）/ `auth_ok`（IP 已放行）/ `ok` /
+  `unknown`（留证）。每次判定带 `evidence` 证据原文
+- **加重惩罚**：实锤风控一次记 2 个失败计数（两次独立确认即可拉黑），
+  unreachable/unknown 维持 1
+- **对照组仲裁（L3）**：实锤前经旁路监听切 `DIRECT`（家庭宽带）复测 ——
+  对照组同中 → 判据可疑暂缓拉黑；对照组正常 → 风控确认
+- **判据校准守卫**：600s 内 ≥3 个不同节点被同套判据「实锤」→
+  全局 `criterion_suspect` 暂缓一切拉黑，任一探活转正常自动解除
+- **二级探针（L2，可选）**：`GEMINI_API_KEY` 激活 `POST :generateContent`
+  真实业务探针（1 token，key 走 TLS header 不进 URL）；不配则用无 key 边缘探针
+- **三级探针 / 巡游探检（L4）**：
+  - `patrol.mode: shadow` —— 经 Mihomo HTTP listener（`proxy` 绑定探活组）
+    对任意候选节点预检，生产组零接触；切 `DIRECT` 即对照组（dry-run 可跑）
+  - `patrol.mode: roam` —— 零配置，借生产组「切→探→切回」，dry-run 自动跳过
+  - `POST /api/patrol` 手动触发；面板「立即风控巡检」按钮
+- **风控档案**：`node_risk` 记录 verdict / 证据原文 / 出口 IP / 来源，
+  `GET /api/risks` + 面板「Gemini 风控档案」卡（实锤置顶）
+- **出口 IP 回显**（`engine.ip_echo_url`）：审计「测的到底是谁」，
+  切换后出口没变（路由未生效）一眼可辨
+- 面板：探活卡展示判定依据与出口 IP、`criterion_suspect` 全局告警横幅
+
+---
+
 ## [1.1.0] - 2026-09-21
 
 面板可用性与运维能力大版本：修复 3 个显示 bug，补上「探活分」可视化与多目标支持，

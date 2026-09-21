@@ -272,6 +272,18 @@ async def _run_cycle_inner():
     except Exception:
         pass
 
+    # 巡游探检：主动体检候选节点是否被平台风控（engine.patrol 内部节流）
+    try:
+        patrolled = False
+        for target in CFG.get("targets", []):
+            events = await loop.run_in_executor(None, engine.patrol, target)
+            if events:
+                patrolled = True
+        if patrolled:
+            await hub.broadcast({"type": "risk", "data": engine.node_risk})
+    except Exception:
+        pass
+
     await hub.broadcast({"type": "nodes", "data": STATE["node_snapshot"]})
     STATE["last_run"] = time.time()
     STATE["cycles"] += 1
@@ -318,6 +330,13 @@ def status():
         "blacklist": _blacklist_detail(),
         "fail_count": dict(engine.fail_count),
         "token_required": bool(AUTH_TOKEN),
+        # ---- Gemini 风控判定（v2） ----
+        "criterion_suspect": engine.criterion_suspect,
+        "node_risk": engine.node_risk,
+        "patrol": {"enabled": engine.patrol_enabled,
+                   "mode": engine.patrol_mode,
+                   "top_k": engine.patrol_top_k,
+                   "interval": engine.patrol_interval},
     }
 
 
@@ -339,6 +358,13 @@ def switches(limit: int = 30):
 @app.get("/api/groups")
 def groups():
     return STATE["group_snapshot"]
+
+
+@app.get("/api/risks")
+def risks():
+    """Gemini 风控档案：每个节点的判定、证据原文、出口 IP、来源。"""
+    return {"criterion_suspect": engine.criterion_suspect,
+            "node_risk": engine.node_risk}
 
 
 @app.get("/api/providers")
@@ -385,6 +411,22 @@ async def healthcheck():
     ok = await loop.run_in_executor(
         None, lambda: oc.healthcheck(provider, 60))
     return {"ok": ok}
+
+
+@app.post("/api/patrol")
+async def patrol_now():
+    """立即触发一轮巡游探检（忽略 interval 节流），逐个验证候选节点。"""
+    loop = asyncio.get_event_loop()
+    total = []
+    for target in CFG.get("targets", []):
+        engine.last_patrol_ts.pop(target["name"], None)   # 忽略节流
+        try:
+            events = await loop.run_in_executor(None, engine.patrol, target)
+            total.extend(events)
+        except Exception as ex:
+            total.append({"error": str(ex)[:120]})
+    await hub.broadcast({"type": "risk", "data": engine.node_risk})
+    return {"ok": True, "events": total, "node_risk": engine.node_risk}
 
 
 @app.post("/api/force")
