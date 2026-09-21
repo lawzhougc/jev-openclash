@@ -12,15 +12,32 @@
       -> 若当前节点已是最优（或优势不足），不做动作
       -> 否则切换 -> 探活验证
           -> 通过: 锁定，清该节点的失败计数
-          -> 不通过: 立刻回滚到上一个可用节点 + 拉黑该节点，记录"事实推翻先验"
+          -> 不通过: 立刻回滚到上一个可用节点
+                     + 实锤风控（geo/滥用）才计入加重惩罚/拉黑
+
+风控判定（v2，配合 prober.classify_response）：
+    * unknown（无法判别）：验证不通过、回滚，但 **绝不拉黑** —— 防误杀
+    * geo_blocked / ip_flagged（实锤）：失败计数 +2；先做对照组仲裁
+      - 对照组（旁路直连）同样命中同判据 -> 判据可疑，暂缓拉黑
+      - 对照组正常 -> 节点风控确认
+    * 判据校准守卫：10 分钟内 >= 3 个不同节点被同一套判据"实锤" ->
+      全局 criterion_suspect，暂缓一切拉黑（大概率是 Google 改版/区域性故障）
+      任一探活 ok/auth_ok 即解除
 
 关键防抖：
     * cooldown    切换后 N 秒内不再切
     * hysteresis  新节点要领先当前节点一定比例才切
-    * blacklist   连续失败达阈值进黑名单
+    * blacklist   失败计数达阈值进黑名单（实锤风控一次记 2）
+
+巡游探检（patrol，主动体检候选节点）：
+    * shadow 模式：经 Mihomo HTTP listener（proxy 绑定探活组）逐个验证，
+      零打扰；切到 DIRECT 即家庭宽带对照组
+    * roam   模式：借生产组"切过去 -> 探活 -> 切回来"，有短暂打扰
+    结果进 probe_cache / node_risk，直接参与候选打分。
 """
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -124,6 +141,29 @@ class Engine:
         self.interval = float(e.get("interval_sec", 120))
         self.probe_ttl = float(e.get("probe_cache_sec", 1800))
 
+        # ---- Gemini 风控判定（v2） ----
+        # 二级探针 key（不配置则停留在 edge 探针）
+        self.probe_api_key = (os.environ.get("GEMINI_API_KEY", "")
+                              or e.get("gemini_api_key", ""))
+        # 出口 IP 回显（审计"测的是谁"），置空关闭
+        self.ip_echo_url = str(e.get("ip_echo_url", "https://api.ipify.org") or "")
+        # 判据校准守卫
+        self.criterion_window = float(e.get("criterion_window", 600))
+        self.criterion_max_distinct = int(e.get("criterion_max_distinct", 3))
+        self.criterion_suspect = False
+        self._condemns: list[tuple[float, str, str]] = []
+        # 风控档案：node -> {verdict, evidence, ts, source, exit_ip, ...}
+        self.node_risk: dict[str, dict] = {}
+        # 巡游探检
+        p = e.get("patrol", {}) or {}
+        self.patrol_enabled = bool(p.get("enabled", False))
+        self.patrol_mode = str(p.get("mode", "roam"))     # roam | shadow
+        self.patrol_top_k = int(p.get("top_k", 3))
+        self.patrol_interval = float(p.get("interval_sec", 1800))
+        self.shadow_url = str(p.get("shadow_url", "") or "")
+        self.shadow_group = str(p.get("shadow_group", "") or "")
+        self.last_patrol_ts: dict[str, float] = {}
+
         # 运行时状态
         self.fail_count: dict[str, int] = {}
         self.blacklist: dict[str, float] = {}
@@ -131,6 +171,110 @@ class Engine:
         self.last_good: dict[str, str] = {}
         self.probe_cache: dict[str, tuple[float, ProbeResult]] = {}
         self._last_path: dict[str, list] = {}
+
+    # ---------- 探活 / 风控档案 ----------
+    def _make_prober(self, probe_cfg: dict, attempts: int | None = None,
+                     via: str = "") -> Prober:
+        return Prober(
+            url=probe_cfg.get("url", ""),
+            ok_status=probe_cfg.get("ok_status", [200, 400, 401, 403, 429]),
+            blocked_status=probe_cfg.get("blocked_status", [403]),
+            timeout=int(probe_cfg.get("timeout", 8)),
+            attempts=attempts if attempts is not None
+            else int(probe_cfg.get("attempts", 2)),
+            api_key=self.probe_api_key,
+            key_url=probe_cfg.get("key_url", ""),
+            via=via,
+            ip_echo_url=self.ip_echo_url,
+        )
+
+    def _has_probe(self, probe_cfg: dict) -> bool:
+        return bool(probe_cfg.get("url") or self.probe_api_key)
+
+    def _record_risk(self, node: str, pres: ProbeResult, source: str):
+        """风控档案：记录每次判定的证据，供面板审计。"""
+        self.node_risk[node] = {
+            "verdict": pres.verdict, "evidence": pres.evidence,
+            "ts": time.time(), "source": source, "exit_ip": pres.exit_ip,
+            "status": pres.status, "passed": pres.passed, "strong": pres.strong,
+        }
+
+    def _note_condemn(self, node: str, evidence: str):
+        """判据校准守卫：短时间内多个不同节点被"实锤" -> 判据可疑。"""
+        now = time.time()
+        self._condemns.append((now, node, (evidence or "")[:80]))
+        self._condemns = [c for c in self._condemns
+                          if now - c[0] <= self.criterion_window]
+        if len({c[1] for c in self._condemns}) >= self.criterion_max_distinct:
+            self.criterion_suspect = True
+
+    def _absorb_verdict(self, node: str, pres: ProbeResult):
+        """把一次探活判定折算成失败计数变动（巡检 / 预检共用）。"""
+        if pres.strong:
+            if not self.criterion_suspect:
+                self._note_condemn(node, pres.evidence)
+            self._mark_fail(node, strong=pres.strong and not self.criterion_suspect)
+        elif pres.verdict in ("ok", "auth_ok"):
+            self._clear_fail(node)
+            self.criterion_suspect = False
+            self._condemns.clear()
+
+    def _shadow_select(self, node: str) -> bool:
+        """在旁路探活组里切到指定目标（先直接切，不行就走可达路径）。"""
+        try:
+            self.oc.select(self.shadow_group, node)
+            return True
+        except Exception:
+            pass
+        try:
+            plan = self.oc.find_path_to(self.shadow_group, node)
+            if not plan:
+                return False
+            self.oc.apply_path(plan)
+            return True
+        except Exception:
+            return False
+
+    def _shadow_probe(self, node: str, probe_cfg: dict) -> ProbeResult | None:
+        """经旁路监听对任意节点预检（生产组零接触）。"""
+        if not (self.shadow_url and self.shadow_group):
+            return None
+        if not self._shadow_select(node):
+            return None
+        time.sleep(1.5)
+        pr = self._make_prober(probe_cfg, attempts=1, via=self.shadow_url)
+        pres = pr.probe_current(node)
+        if self.ip_echo_url:
+            pres.exit_ip = pr.probe_exit_ip()
+        return pres
+
+    def _baseline_probe(self, probe_cfg: dict) -> ProbeResult | None:
+        """对照组：探活组切到 DIRECT（家庭宽带出口）再探同一目标。
+
+        只有旁路监听可用时才是真对照；用来仲裁"是节点被风控，
+        还是判据本身失效 / Google 侧故障"。
+        """
+        if not (self.shadow_url and self.shadow_group):
+            return None
+        try:
+            prev = self.oc.group(self.shadow_group).get("now")
+        except Exception:
+            prev = None
+        if not self._shadow_select("DIRECT"):
+            return None
+        time.sleep(1.0)
+        try:
+            pr = self._make_prober(probe_cfg, attempts=1, via=self.shadow_url)
+            pres = pr.probe_current("__baseline__")
+            if self.ip_echo_url:
+                pres.exit_ip = pr.probe_exit_ip()
+        finally:
+            if prev:
+                try:
+                    self._shadow_select(prev)
+                except Exception:
+                    pass
+        return pres
 
     # ---------- 黑名单 ----------
     def _is_blacklisted(self, node: str) -> bool:
@@ -143,8 +287,9 @@ class Engine:
             return False
         return True
 
-    def _mark_fail(self, node: str):
-        self.fail_count[node] = self.fail_count.get(node, 0) + 1
+    def _mark_fail(self, node: str, strong: bool = False):
+        """strong=True（实锤风控）一次记 2 —— 两次独立确认即可拉黑。"""
+        self.fail_count[node] = self.fail_count.get(node, 0) + (2 if strong else 1)
         if self.fail_count[node] >= self.fail_threshold:
             self.blacklist[node] = time.time()
 
@@ -164,15 +309,24 @@ class Engine:
                           delay=n.delay, delay_score=d, prior=p)
             hit = self.probe_cache.get(n.name)
             if hit and now - hit[0] <= self.probe_ttl:
-                # 有真实探活记录：探活分进入公式，被风控/未通过直接压 0
+                # 有真实探活记录：探活分进入公式
                 pres = hit[1]
                 c.probed = True
                 c.probe_score = pres.score
                 c.final = self._combine(d, c.probe_score, p)
-                if pres.blocked:
-                    c.note = "探活被风控"
-                elif not pres.ok:
+                if pres.strong:
+                    # 事实推翻先验：实锤风控直接归零
+                    c.final = 0.0
+                    c.note = ("探活·地区风控" if pres.verdict == "geo_blocked"
+                              else "探活·IP封禁")
+                    if pres.evidence:
+                        c.note += f"（{pres.evidence[:28]}）"
+                elif pres.verdict == "unknown" and not pres.passed:
+                    c.note = "探活未判别（留证）"
+                elif not pres.passed:
                     c.note = "探活未通过"
+                elif pres.verdict == "quota_limited":
+                    c.note = "配额受限"
             else:
                 # 未探活的节点，probe_score 用先验替代（避免权重丢失）
                 c.probe_score = p
@@ -189,8 +343,7 @@ class Engine:
 
     def _combine(self, delay_score: float, probe_score: float,
                  prior: float) -> float:
-        return round(self.w_lat * delay_score +
-                     self.w_probe * probe_score +
+        return round(self.w_lat * delay_score + self.w_probe * probe_score +
                      self.w_prior * prior, 4)
 
     # ---------- 先验上下文构造 ----------
@@ -353,14 +506,8 @@ class Engine:
             # DRY-RUN 也要探活 —— 否则无法验证判据是否正确。
             # 但不切换节点，因此探到的是"当前出口"而非"候选出口"。
             probe_res = None
-            if probe_cfg.get("url"):
-                pr = Prober(
-                    url=probe_cfg["url"],
-                    ok_status=probe_cfg.get("ok_status", [200, 400, 401, 403, 429]),
-                    blocked_status=probe_cfg.get("blocked_status", [403]),
-                    timeout=int(probe_cfg.get("timeout", 8)),
-                    attempts=1,
-                )
+            if self._has_probe(probe_cfg):
+                pr = self._make_prober(probe_cfg, attempts=1)
                 pres = pr.probe_current("__dry_run_current__")
                 probe_res = pres.to_dict()
             return Decision(now, tname, group, "switch", cur, best.name,
@@ -386,22 +533,38 @@ class Engine:
 
         # 6. 探活验证
         probe_res = None
-        if probe_cfg.get("url"):
-            pr = Prober(
-                url=probe_cfg["url"],
-                ok_status=probe_cfg.get("ok_status", [200, 400, 401, 403, 429]),
-                blocked_status=probe_cfg.get("blocked_status", [403]),
-                timeout=int(probe_cfg.get("timeout", 8)),
-                attempts=int(probe_cfg.get("attempts", 2)),
-            )
+        if self._has_probe(probe_cfg):
+            pr = self._make_prober(probe_cfg)
             time.sleep(2)                       # 等 Mihomo 应用新出口
             pres = pr.probe_current(best.name)
+            if self.ip_echo_url:
+                pres.exit_ip = pr.probe_exit_ip()
             probe_res = pres.to_dict()
             self.probe_cache[best.name] = (time.time(), pres)
+            self._record_risk(best.name, pres, "switch")
 
-            if not pres.ok or pres.blocked:
-                # 事实推翻先验 -> 回滚 + 拉黑
-                self._mark_fail(best.name)
+            if not pres.passed:
+                # 事实推翻先验 -> 回滚；是否拉黑取决于判定等级
+                note = ""
+                if pres.strong:
+                    base = self._baseline_probe(probe_cfg)
+                    if base is not None:
+                        self._record_risk("__baseline__", base, "baseline")
+                        if base.verdict == pres.verdict:
+                            # 对照组命中同判据：判据本身可疑，暂缓拉黑
+                            self.criterion_suspect = True
+                            note = "（对照组同样命中 → 判据可疑）"
+                        elif base.passed:
+                            note = "（对照组正常，节点风控确认）"
+                    if not self.criterion_suspect:
+                        self._note_condemn(best.name, pres.evidence)
+                    self._mark_fail(best.name,
+                                    strong=pres.strong and not self.criterion_suspect)
+                else:
+                    # unreachable / unknown / quota：普通失败计数
+                    self._mark_fail(best.name)
+                if self.criterion_suspect:
+                    note += "（判据待校准，暂缓拉黑）"
                 back_path = None
                 try:
                     back_path = self.oc.find_path_to(group, prev_good)
@@ -409,18 +572,23 @@ class Engine:
                         self.oc.apply_path(back_path)
                 except Exception:
                     pass
+                ev = f" / {pres.evidence}" if pres.evidence else ""
+                ip = f" / 出口 {pres.exit_ip}" if pres.exit_ip else ""
                 return Decision(
                     now, tname, group, "rollback", cur, prev_good,
-                    f"{best.name} 探活失败（{pres.label}"
+                    f"{best.name} 探活未通过（{pres.verdict}{ev}"
                     f"{' HTTP ' + str(pres.status) if pres.status else ''}"
-                    f"{'/' + pres.verdict if pres.verdict else ''}），"
-                    f"已回滚到 {prev_good}",
+                    f"{ip}）{note}，已回滚到 {prev_good}",
                     cands, probe_res, prior, back_path or [])
 
             self._clear_fail(best.name)
             self.last_good[tname] = best.name
+            if self.criterion_suspect:
+                self.criterion_suspect = False
+                self._condemns.clear()
+            ip = f" / 出口 {pres.exit_ip}" if pres.exit_ip else ""
             return Decision(now, tname, group, "switch", cur, best.name,
-                            reason + f" | 探活通过 {pres.label}",
+                            reason + f" | 探活通过 {pres.verdict}{ip}",
                             cands, probe_res, prior, plan_path)
 
         # 无探活配置
@@ -428,3 +596,92 @@ class Engine:
         self.last_good[tname] = best.name
         return Decision(now, tname, group, "switch", cur, best.name, reason,
                         cands, None, prior, plan_path)
+
+    # ---------- 巡游探检（主动体检候选节点） ----------
+    def patrol(self, target: dict) -> list[dict]:
+        """按 interval 对 top-K 候选做"是否被平台风控"的主动体检。
+
+        shadow 模式：经旁路监听逐个验证，生产组零接触（dry-run 也可跑）。
+        roam   模式：借生产组 切换->探活->恢复，有短暂打扰（dry-run 不跑）。
+        """
+        if not self.patrol_enabled:
+            return []
+        tname = target["name"]
+        now = time.time()
+        if now - self.last_patrol_ts.get(tname, 0.0) < self.patrol_interval:
+            return []
+        probe_cfg = target.get("probe", {})
+        if not self._has_probe(probe_cfg):
+            return []
+        group = target["group"]
+        provider = self.cfg["openclash"]["provider"]
+        groups = target.get("candidate_groups") or []
+        try:
+            nodes = self.oc.resolve_candidates(groups, provider)
+        except Exception:
+            return []
+        cur = ""
+        try:
+            cur = self.oc.resolve_now(self.oc.group(group).get("now") or "")
+        except Exception:
+            pass
+
+        def rank(n: Node):
+            fresh = 0
+            hit = self.probe_cache.get(n.name)
+            if hit and now - hit[0] <= self.probe_ttl:
+                fresh = 1
+            return (fresh, -(n.delay or 9999))   # 未实测优先，其次延迟低
+
+        alive = sorted((n for n in nodes if n.alive and n.name != cur), key=rank)
+        picks = alive[: max(1, self.patrol_top_k)]
+        self.last_patrol_ts[tname] = now
+        if not picks:
+            return []
+
+        events: list[dict] = []
+        if self.patrol_mode == "shadow":
+            for n in picks:
+                try:
+                    pres = self._shadow_probe(n.name, probe_cfg)
+                except Exception:
+                    continue
+                if pres is None:
+                    continue
+                self.probe_cache[n.name] = (time.time(), pres)
+                self._record_risk(n.name, pres, "shadow")
+                self._absorb_verdict(n.name, pres)
+                events.append(pres.to_dict())
+            return events
+
+        # roam 模式
+        if self.cfg.get("server", {}).get("dry_run"):
+            return []
+        prev_good = self.last_good.get(tname) or cur
+        for n in picks:
+            try:
+                plan = self.oc.find_path_to(group, n.name)
+                if not plan:
+                    continue
+                self.oc.apply_path(plan)
+                time.sleep(2)
+                pr = self._make_prober(probe_cfg, attempts=1)
+                pres = pr.probe_current(n.name)
+                if self.ip_echo_url:
+                    pres.exit_ip = pr.probe_exit_ip()
+                self.probe_cache[n.name] = (time.time(), pres)
+                self._record_risk(n.name, pres, "patrol")
+                self._absorb_verdict(n.name, pres)
+                events.append(pres.to_dict())
+            except Exception as ex:
+                events.append({"node": n.name, "error": str(ex)[:80]})
+        try:
+            if prev_good:
+                back = self.oc.find_path_to(group, prev_good)
+                if back:
+                    self.oc.apply_path(back)
+        except Exception:
+            pass
+        # 巡检动过生产组：进入正常冷却，防抖
+        self.last_switch_ts[tname] = time.time()
+        return events
