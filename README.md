@@ -38,7 +38,8 @@ SmartRoute 针对这三点分别给出：真实探活、可达路径解析、多
 ```
 
 - **延迟分**：来自 provider 的 `history.delay`，50ms 满分、400ms 归零
-- **探活分**：真实请求的响应耗时与判据结果，被风控直接归零
+- **探活分**：真实请求的响应耗时与判据结果，被风控直接归零；
+  探活结果带 TTL 缓存后进入候选打分，未实测的节点按先验折算
 - **先验分**：Jev 给出的该地区被平台放行概率
 
 权重可在 `config.yaml` 的 `engine` 段调整。
@@ -151,7 +152,7 @@ docker run -d --name smartroute --restart unless-stopped \
 ```yaml
 openclash:
   api: "http://192.168.3.2:9090"   # 本机开发填软路由 IP；部署到软路由后填 127.0.0.1
-  secret: "np7fj4lv"
+  secret: "np7fj4lv"               # 建议用环境变量 OPENCLASH_SECRET 注入
   provider: "glados"                # 节点来源 provider 名
 
 targets:
@@ -177,6 +178,7 @@ engine:
   fail_threshold: 3                 # 连续失败几次进黑名单
   blacklist_sec: 1800
   interval_sec: 120
+  probe_cache_sec: 1800             # 探活结果缓存（进入候选打分）
 
 jev:
   enabled: true
@@ -186,6 +188,7 @@ jev:
 
 server:
   dry_run: true                     # 先观察，确认无误后改 false
+  token: ""                         # 面板访问令牌，留空不鉴权；也可用 SMARTROUTE_TOKEN
 ```
 
 ### 加一个新平台
@@ -209,14 +212,50 @@ server:
 
 | 端点 | 说明 |
 |---|---|
-| `GET /api/status` | 运行状态、轮次、黑名单 |
-| `GET /api/nodes` | 全部节点延迟快照 |
+| `GET /api/status` | 运行状态、轮次、权重、累计切换/回滚、黑名单明细、OpenClash/Jev 状态 |
+| `GET /api/nodes` | 全部节点延迟快照（含延迟历史，供走势图） |
 | `GET /api/decisions` | 决策历史 |
 | `GET /api/switches` | 只含真实动作的决策 |
-| `GET /api/groups` | 目标策略组当前状态 |
-| `GET /api/health` | 连通性自检（OpenClash / Jev / 探活） |
-| `POST /api/run` | 立即执行一轮决策 |
+| `GET /api/groups` | 目标策略组当前状态（含 `resolved` 下钻后的真实节点） |
+| `GET /api/health` | 连通性自检（OpenClash / Jev / 探活），结果缓存 60s，`?force=1` 强制重测 |
+| `POST /api/run` | 立即执行一轮决策（与调度器互斥，冲突返回 409） |
+| `POST /api/pause` | `{"on": true/false}` 暂停 / 恢复自动决策（手动不受影响） |
+| `POST /api/force` | `{"target","node"}` 强制切换；dry-run 只预演可达路径 |
+| `POST /api/unblacklist` | `{"node":"..."}` 或 `{"node":"*"}` 解除黑名单 |
+| `POST /api/healthcheck` | 触发 provider 全量测速（约 1 分钟） |
 | `WS /ws/live` | 实时推送决策、节点、组状态 |
+
+### 面板
+
+单页控制台（`static/index.html`），提供：
+
+- 决策流（相对时间 + 可达路径 + 导出 JSON/CSV）、Jev 地区先验、探活判据细分与历史
+- 候选打分（延迟分 / 探活分 / 先验 / 综合 + 走势 sparkline，支持搜索 / 地区筛选）
+- 多目标 Tab、当前节点高亮、黑名单明细与解除
+- 运维控制：暂停引擎、强制切换、触发测速、三路自检
+- 暗色模式（跟随系统）、WS 断线横幅与自动重连
+
+### 访问控制（可选）
+
+设置 `server.token`（或环境变量 `SMARTROUTE_TOKEN`）后，面板与 API 需要认证：
+
+- 浏览器：Basic 认证，**用户名任意，密码 = token**
+- 程序调用：`Authorization: Bearer <token>` 或 `?token=<token>`
+- WebSocket：同上（浏览器自动带上 Basic 凭据；自定义客户端可用 `?token=`）
+
+留空则不鉴权（默认）。局域网内共享部署时建议开启。
+
+### 相关环境变量
+
+| 变量 | 作用 |
+|---|---|
+| `TYPESAFE_API_KEY` | Jev API key（优先于 config） |
+| `OPENCLASH_SECRET` | OpenClash 控制器 secret（优先于 config，避免入库） |
+| `SMARTROUTE_TOKEN` | 面板访问令牌（优先于 config） |
+| `SMARTROUTE_CONFIG` | config.yaml 路径 |
+| `SMARTROUTE_DATA` | 决策落盘目录（默认 `./data`） |
+
+决策历史落盘在 `data/decisions.jsonl`（已加入 .gitignore），重启后计数与历史自动恢复。
 
 ---
 
